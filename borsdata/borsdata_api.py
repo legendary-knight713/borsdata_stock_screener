@@ -4,332 +4,466 @@ import time
 from borsdata import constants as constants
 
 # pandas options for string representation of data frames (print)
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', None)
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", None)
 
 
 class BorsdataAPI:
-    def __init__(self, _api_key, verbose=False):
+    def __init__(self, _api_key):
         self._api_key = _api_key
-        self._params = {'authKey': self._api_key, 'maxYearCount': 20, 'maxR12QCount': 40, 'maxCount': 20, 'date': None, 'version': 1}
-        self._url_root = 'https://apiservice.borsdata.se/v1/'
+        self._url_root = "https://apiservice.borsdata.se/v1/"
         self._last_api_call = 0
         self._api_calls_per_second = 10
-        # used for tracing (api-calls in terminal)
-        self._verbose = verbose
 
-    def _debug_trace(self, string):
-        if self._verbose:
-            print(string)
-
-    def _call_api(self, url):
+    def _call_api(self, url, params):
         """
-        internal function for api-calls
-        :param url: url to be added to _url_root
-        :return: json-encoded content if any
+        Internal function for API calls
+        :param url: URL add to URL root
+        :params: Additional URL parameters
+        :return: JSON-encoded content, if any
         """
         current_time = time.time()
         time_delta = current_time - self._last_api_call
-        # introduce sleep if time-delta is too big to prevent error 429.
+        # Introduce sleep if time-delta is too big to prevent error 429.
         if time_delta < 1 / self._api_calls_per_second:
             time.sleep(1 / self._api_calls_per_second - time_delta)
-        response = requests.get(self._url_root + url, self._params)
-        self._debug_trace("BorsdataAPI >> calling API: " + self._url_root + url)
+        response = requests.get(self._url_root + url, params)
         self._last_api_call = time.time()
-        # status_code == 200 SUCCESS!
+        # Status code == 200 SUCCESS!
         if response.status_code != 200:
             print(f"BorsdataAPI >> API-Error, status code: {response.status_code}")
             return response
         return response.json()
 
+    def _set_index(self, df, index, ascending=True):
+        """
+        Set index(es) and sort by index
+        :param df: pd.DataFrame
+        :param index: Column name to set to index
+        :param ascending: True to sort index ascending
+        """
+        if type(index) == list:
+            for idx in index:
+                if not idx in df.columns.array:
+                    return
+        else:
+            if not index in df.columns:
+                return
+
+        df.set_index(index, inplace=True)
+        df.sort_index(inplace=True, ascending=ascending)
+
+    def _parse_date(self, df, key):
+        """
+        Parse date string as pd.datetime, if available
+        :param df: pd.DataFrame
+        :param key: Column name
+        """
+        if key in df:
+            df[key] = pd.to_datetime(df[key])
+
+    def _get_base_params(self):
+        """
+        Get URL parameter base
+        :return: Parameters dict
+        """
+        return {
+            "authKey": self._api_key,
+            "version": 1,
+        }
+
     """
-    Instrument Meta
+    Instrument Metadata
     """
+
     def get_branches(self):
         """
-        returns branch data
+        Get branch data
         :return: pd.DataFrame
         """
-        json_data = self._call_api('branches')
-        return pd.json_normalize(json_data['branches'])
+        url = "branches"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["branches"])
+        self._set_index(df, "id")
+        return df
 
     def get_countries(self):
         """
-        returns countries data
+        Get country data
         :return: pd.DataFrame
         """
-        json_data = self._call_api('countries')
-        return pd.json_normalize(json_data['countries'])
+        url = "countries"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["countries"])
+        self._set_index(df, "id")
+        return df
 
     def get_markets(self):
         """
-        returns market data
+        Get market data
         :return: pd.DataFrame
         """
-        json_data = self._call_api('markets')
-        return pd.json_normalize(json_data['markets'])
+        url = "markets"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["markets"])
+        self._set_index(df, "id")
+        return df
 
     def get_sectors(self):
         """
-        returns sector data
+        Get sector data
         :return: pd.DataFrame
         """
-        json_data = self._call_api('sectors')
-        return pd.json_normalize(json_data['sectors'])
+        url = "sectors"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["sectors"])
+        self._set_index(df, "id")
+        return df
 
-    def get_translation_meta_data(self):
+    def get_translation_metadata(self):
         """
-        returns translation metadata
+        Get translation metadata
         :return: pd.DataFrame
         """
-        url = 'translationmetadata'
-        json_data = self._call_api(url)
-        translation_data = pd.json_normalize(json_data['translationMetadatas'])
-        return translation_data
+        url = "translationmetadata"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["translationMetadatas"])
+        self._set_index(df, "translationKey")
+        return df
 
     """
     Instruments
     """
+
     def get_instruments(self):
         """
-        returns instrument data
+        Get instrument data
         :return: pd.DataFrame
         """
-        url = 'instruments'
-        json_data = self._call_api(url)
-        instruments = pd.json_normalize(json_data['instruments'])
-        instruments['listingDate'] = pd.to_datetime(instruments['listingDate'])
-        return instruments
+        url = "instruments"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["instruments"])
+        self._parse_date(df, "listingDate")
+        self._set_index(df, "insId")
+        return df
 
     def get_instruments_updated(self):
         """
-        returns all updated instruments
+        Get all updated instruments
         :return: pd.DataFrame
         """
-        url = 'instruments/updated'
-        json_data = self._call_api(url)
-        instruments = pd.json_normalize(json_data['instruments'])
-        print(instruments.tail())
-        return instruments
+        url = "instruments/updated"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["instruments"])
+        self._parse_date(df, "updatedAt")
+        self._set_index(df, "insId")
+        return df
 
     """
     KPIs
     """
-    def get_kpi_history(self, ins_id, kpi_id, report_type, price_type):
-        url = f"instruments/{ins_id}/kpis/{kpi_id}/{report_type}/{price_type}/history"
-        json_data = self._call_api(url)
-        # creating dataframes from json-data
-        kpi_history = pd.DataFrame.from_dict(json_data['values'], orient='columns')
-        # the structure of the data-columns received are; 'y' year, 'p' period, 'v' value (kpi).
-        # renaming the columns
-        kpi_history.rename(columns={"y": "year", "p": "period", "v": "kpi_value"}, inplace=True)
-        kpi_history.fillna(0, inplace=True)
-        return kpi_history
 
-    def get_kpi_summary(self, ins_id, report_type):
+    def get_kpi_history(self, ins_id, kpi_id, report_type, price_type, max_count=None):
         """
-        returns kpi summary for instrument
-        :param ins_id: instrument id
-        :param report_type: report type ['quarter', 'year', 'r12']
-        :return: json object
+        Get KPI history for an instrument
+        :param ins_id: Instrument ID
+        :param kpi_id: KPI ID
+        :param report_type: ['quarter', 'year', 'r12']
+        :param price_type: ['mean', 'high', 'low']
+        :param max_count: Max. number of history (quarters/years) to get
+        :return: pd.DataFrame
+        """
+        url = f"instruments/{ins_id}/kpis/{kpi_id}/{report_type}/{price_type}/history"
+
+        params = self._get_base_params()
+        if max_count is not None:
+            params["maxCount"] = max_count
+
+        json_data = self._call_api(url, params)
+        df = pd.json_normalize(json_data["values"])
+        df.rename(columns={"y": "year", "p": "period", "v": "kpiValue"}, inplace=True)
+        self._set_index(df, ["year", "period"], ascending=False)
+        return df
+
+    def get_kpi_summary(self, ins_id, report_type, max_count=None):
+        """
+        Get KPI summary for instrument
+        :param ins_id: Instrument ID
+        :param report_type: Report type ['quarter', 'year', 'r12']
+        :param max_count: Max. number of history (quarters/years) to get
+        :return: pd.DataFrame
         """
         url = f"instruments/{ins_id}/kpis/{report_type}/summary"
-        json_data = self._call_api(url)
-        return json_data
+
+        params = self._get_base_params()
+        if max_count is not None:
+            params["maxCount"] = max_count
+        json_data = self._call_api(url, params)
+        df = pd.json_normalize(json_data["kpis"], record_path="values", meta="KpiId")
+        df.rename(
+            columns={"y": "year", "p": "period", "v": "kpiValue", "KpiId": "kpiId"},
+            inplace=True,
+        )
+        df = df.pivot_table(
+            index=["year", "period"], columns="kpiId", values="kpiValue"
+        )
+        self._set_index(df, ["year", "period"], ascending=False)
+        return df
 
     def get_kpi_data_instrument(self, ins_id, kpi_id, calc_group, calc):
         """
-        get screener data, for more information: https://github.com/Borsdata-Sweden/API/wiki/KPI-Screener
-        :param ins_id: instrument id
-        :param kpi_id: kpi id
+        Get screener data, for more information: https://github.com/Borsdata-Sweden/API/wiki/KPI-Screener
+        :param ins_id: Instrument ID
+        :param kpi_id: KPI ID
         :param calc_group: ['1year', '3year', '5year', '7year', '10year', '15year']
         :param calc: ['high', 'latest', 'mean', 'low', 'sum', 'cagr']
-        :return: json object
+        :return: pd.DataFrame
         """
         url = f"instruments/{ins_id}/kpis/{kpi_id}/{calc_group}/{calc}"
-        json_data = self._call_api(url)
-        print(json_data)
-        return json_data
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["value"])
+        df.rename(
+            columns={"i": "insId", "n": "valueNum", "s": "valueStr"},
+            inplace=True,
+        )
+        self._set_index(df, "insId")
+        return df
 
     def get_kpi_data_all_instruments(self, kpi_id, calc_group, calc):
         """
-        get kpi data for all instruments
-        :param kpi_id: kpi id
+        Get KPI data for all instruments
+        :param kpi_id: KPI ID
         :param calc_group: ['1year', '3year', '5year', '7year', '10year', '15year']
         :param calc: ['high', 'latest', 'mean', 'low', 'sum', 'cagr']
-        :return: json object
+        :return: pd.DataFrame
         """
         url = f"instruments/kpis/{kpi_id}/{calc_group}/{calc}"
-        json_data = self._call_api(url)
-        print(json_data)
-        return json_data
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["values"])
+        df.rename(
+            columns={"i": "insId", "n": "valueNum", "s": "valueStr"},
+            inplace=True,
+        )
+        self._set_index(df, "insId")
+        return df
 
     def get_updated_kpis(self):
         """
-        get latest calculation time for kpis
-        :return: json object
+        Get latest calculation date and time for KPIs
+        :return: pd.datetime
         """
-        url = f"instruments/kpis/updated"
-        json_data = self._call_api(url)
-        return json_data
+        url = "instruments/kpis/updated"
+        json_data = self._call_api(url, self._get_base_params())
+        return pd.to_datetime(json_date["kpisCalcUpdated"])
 
     def get_kpi_metadata(self):
         """
-        get kpi metadata
-        :return: json object
+        Get KPI metadata
+        :return: pd.DataFrame
         """
-        url = f"instruments/kpis/metadata"
-        json_data = self._call_api(url)
-        return json_data
+        url = "instruments/kpis/metadata"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["kpiHistoryMetadatas"])
+        self._set_index(df, "kpiId")
+        return df
 
     """
     Reports
     """
-    def get_instrument_report(self, ins_id, report_type):
+
+    def get_instrument_report(self, ins_id, report_type, max_count=None):
         """
-        get specific report data
-        :param ins_id: instrument id
+        Get specific report data
+        :param ins_id: Instrument ID
         :param report_type: ['quarter', 'year', 'r12']
+        :param max_count: Max. number of history (quarters/years) to get
         :return: pd.DataFrame of report data
         """
         url = f"instruments/{ins_id}/reports/{report_type}"
-        json_data = self._call_api(url)
-        reports = pd.DataFrame.from_dict(json_data['reports'], orient='columns')
-        return reports
 
-    def get_instrument_reports(self, ins_id):
+        params = self._get_base_params()
+        if max_count is not None:
+            params["maxCount"] = max_count
+        json_data = self._call_api(url, params)
+
+        df = pd.json_normalize(json_data["reports"])
+        df.columns = [x.replace("_", "") for x in df.columns]
+        self._parse_date(df, "reportStartDate")
+        self._parse_date(df, "reportEndDate")
+        self._parse_date(df, "reportDate")
+        self._set_index(df, ["year", "period"], ascending=False)
+        return df
+
+    def get_instrument_reports(self, ins_id, max_count_year=None, max_count_qr12=None):
         """
-        get all report data
-        :param ins_id:
-        :return: [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
+        Get all report data
+        :param ins_id: Instrument ID
+        :param max_count_year: Max. number of years to get
+        :param max_count_qr12: Max. number of quarters/r12 to get
+        :return: [pd.DataFrame quarter, pd.DataFrame year, pd.DataFrame r12]
         """
         # constructing url for api-call, adding ins_id
-        url = f'instruments/{ins_id}/reports'
-        json_data = self._call_api(url)
-        # creating dataframes from json-data
-        reports_year = pd.DataFrame.from_dict(json_data['reportsYear'], orient='columns')
-        reports_quarter = pd.DataFrame.from_dict(json_data['reportsQuarter'], orient='columns')
-        reports_r12 = pd.DataFrame.from_dict(json_data['reportsR12'], orient='columns')
-        # making the columns lower-case in all dataframes
-        reports_year.columns = [x.lower() for x in reports_year.columns]
-        reports_quarter.columns = [x.lower() for x in reports_quarter.columns]
-        reports_r12.columns = [x.lower() for x in reports_r12.columns]
-        # replacing all nans with a 0
-        reports_year.fillna(0, inplace=True)
-        reports_quarter.fillna(0, inplace=True)
-        reports_r12.fillna(0, inplace=True)
-        # sort data ascending
-        reports_year = reports_year.sort_values(['year', 'period'], ascending=True)
-        reports_quarter = reports_quarter.sort_values(['year', 'period'], ascending=True)
-        reports_r12 = reports_r12.sort_values(['year', 'period'], ascending=True)
-        return reports_quarter, reports_year, reports_r12
+        url = f"instruments/{ins_id}/reports"
+
+        params = self._get_base_params()
+        if max_count_year is not None:
+            params["maxYearCount"] = max_count_year
+        if max_count_qr12 is not None:
+            params["maxR12QCount"] = max_count_qr12
+        json_data = self._call_api(url, params)
+
+        dfs = []
+        for report_type in ["reportsQuarter", "reportsYear", "reportsR12"]:
+            df = pd.json_normalize(json_data[report_type])
+            df.columns = [x.replace("_", "") for x in df.columns]
+            self._parse_date(df, "reportStartDate")
+            self._parse_date(df, "reportEndDate")
+            self._parse_date(df, "reportDate")
+            self._set_index(df, ["year", "period"], ascending=False)
+            dfs.append(df)
+        return dfs
 
     def get_reports_metadata(self):
         """
-        get report metadata
-        :return: pd.DataFrame with metadata
+        Get reports metadata
+        :return: pd.DataFrame
         """
-        url = f"instruments/reports/metadata"
-        json_data = self._call_api(url)
-        metadata = pd.DataFrame.from_dict(json_data['reportMetadatas'], orient='columns')
-        return metadata
+        url = "instruments/reports/metadata"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["reportMetadatas"])
+        # Fix probable misspelling 'propery' -> 'property'
+        df.rename(
+            columns={"reportPropery": "reportProperty"},
+            inplace=True,
+        )
+        df["reportProperty"] = df["reportProperty"].apply(lambda x: x.replace("_", ""))
+        self._set_index(df, "reportProperty")
+        return df
 
     """
-    Stockprices
+    Stock prices
     """
-    def get_instrument_stock_prices(self, ins_id):
+
+    def get_instrument_stock_prices(self, ins_id, from_=None, to=None, max_count=None):
         """
-        get stock prices for ins_id
-        :param ins_id:
-        :return: pd.DataFrame()
+        Get stock prices for instrument ID
+        :param ins_id: Instrument ID
+        :param from_: Start date in string format, e.g. '2000-01-01'
+        :param to: Stop date in string format, e.g. '2000-01-01'
+        :param max_count: Max. number of history (quarters/years) to get
+        :return: pd.DataFrame
         """
-        url = f'instruments/{ins_id}/stockprices'
-        json_data = self._call_api(url)
-        stock_prices = pd.json_normalize(json_data['stockPricesList'])
-        # re-naming the columns
-        stock_prices.rename(columns={'d': 'date', 'c': 'close', 'h': 'high', 'l': 'low',
-                                     'o': 'open', 'v': 'volume'}, inplace=True)
-        # converting the date to a datetime-object
-        stock_prices.date = pd.to_datetime(stock_prices.date)
-        stock_prices.fillna(0, inplace=True)
-        # setting the 'date'-column in dataframe (table/spreadsheet) as index
-        stock_prices.set_index('date', inplace=True)
-        # sorting by the new index (date)
-        stock_prices = stock_prices.sort_index()
-        return stock_prices
+        url = f"instruments/{ins_id}/stockprices"
+
+        params = self._get_base_params()
+        if from_ is not None:
+            params["from"] = from_
+        if to is not None:
+            params["to"] = to
+        if max_count is not None:
+            params["maxCount"] = max_count
+        json_data = self._call_api(url, params)
+
+        df = pd.json_normalize(json_data["stockPricesList"])
+        df.rename(
+            columns={
+                "d": "date",
+                "c": "close",
+                "h": "high",
+                "l": "low",
+                "o": "open",
+                "v": "volume",
+            },
+            inplace=True,
+        )
+        self._parse_date(df, "date")
+        self._set_index(df, "date", ascending=False)
+        return df
 
     def get_instruments_stock_prices_last(self):
         """
-        get last days' stock prices for all instruments
-        :return: pd.DataFrame()
+        Get last days' stock prices for all instruments
+        :return: pd.DataFrame
         """
-        url = f'/instruments/stockprices/last'
-        json_data = self._call_api(url)
-        stock_prices = pd.json_normalize(json_data['stockPricesList'])
-        stock_prices.rename(columns={'d': 'date', 'i': 'ins_id', 'c': 'close', 'h': 'high', 'l': 'low',
-                                     'o': 'open', 'v': 'volume'}, inplace=True)
-        stock_prices.fillna(0, inplace=True)
-        return stock_prices
+        url = "instruments/stockprices/last"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["stockPricesList"])
+        df.rename(
+            columns={
+                "d": "date",
+                "i": "insId",
+                "c": "close",
+                "h": "high",
+                "l": "low",
+                "o": "open",
+                "v": "volume",
+            },
+            inplace=True,
+        )
+        self._parse_date(df, "date")
+        self._set_index(df, "date", ascending=False)
+        return df
 
     def get_stock_prices_date(self, date):
         """
-        get all instrument stock prices for passed date
-        :param date: date in string format, e.g. '2000-01-01'
-        :return:
+        Get all instrument stock prices for given date
+        :param date: Date in string format, e.g. '2000-01-01'
+        :return: pd.DataFrame
         """
-        url = f'/instruments/stockprices/date'
-        self._params['date'] = date
-        json_data = self._call_api(url)
-        stock_prices = pd.json_normalize(json_data['stockPricesList'])
-        stock_prices.rename(columns={'d': 'date', 'i': 'ins_id', 'c': 'close', 'h': 'high', 'l': 'low',
-                                     'o': 'open', 'v': 'volume'}, inplace=True)
-        return stock_prices
+        url = "instruments/stockprices/date"
+
+        params = self._get_base_params()
+        params["date"] = date
+        json_data = self._call_api(url, params)
+        df = pd.json_normalize(json_data["stockPricesList"])
+        df.rename(
+            columns={
+                "d": "date",
+                "i": "insId",
+                "c": "close",
+                "h": "high",
+                "l": "low",
+                "o": "open",
+                "v": "volume",
+            },
+            inplace=True,
+        )
+        self._parse_date(df, "date")
+        self._set_index(df, "insId")
+        return df
 
     """
-    Stocksplits
+    Stock splits
     """
+
     def get_stock_splits(self):
         """
-        get stock splits
-        :return:
+        Get stock splits
+        :return: pd.DataFrame
         """
-        url = f'/instruments/stocksplits'
-        json_data = self._call_api(url)
-        stock_splits = pd.json_normalize(json_data['stockSplitList'])
-        stock_splits['splitDate'] = pd.to_datetime(stock_splits['splitDate'] )
-        return stock_splits
-    
-    """
-    Helper Functions
-    """
-    def get_instrument_name(self, ins_id):
-        """
-        returns the instrument name (if found)
-        :param ins_id:
-        :return: name of instrument (string)
-        """
-        df = self.get_instruments()
-        try:
-            name = df[df['insId'] == ins_id]['name'].values[0]
-        except Exception as e:
-            print("BorsdataAPI >> get_instrument_name Error")
-            print(e)
-            name = "Name could not be found!"
-        return name
+        url = "instruments/stocksplits"
+        json_data = self._call_api(url, self._get_base_params())
+        df = pd.json_normalize(json_data["stockSplitList"])
+        df.rename(
+            columns={"instrumentId": "insId"},
+            inplace=True,
+        )
+        self._parse_date(df, "splitDate")
+        self._set_index(df, "insId")
+        return df
 
 
 if __name__ == "__main__":
     # Main, call functions here.
     api = BorsdataAPI(constants.API_KEY)
-    #api.get_translation_meta_data()
-    #api.get_instruments_updated()
-    #api.get_kpi_summary(3, 'year')
-    #api.get_kpi_data_instrument(3, 10, '1year', 'mean')
-    #api.get_kpi_data_all_instruments(10, '1year', 'mean')
-    #api.get_updated_kpis()
-    #api.get_kpi_metadata()
-    #api.get_instrument_report(3, 'year')
-    #api.get_reports_metadata()
-    #api.get_stock_prices_date('2020-09-25')
-    #api.get_stock_splits()
-
+    # api.get_translation_meta_data()
+    # api.get_instruments_updated()
+    api.get_kpi_summary(3, "year")
+    # api.get_kpi_data_instrument(3, 10, '1year', 'mean')
+    # api.get_kpi_data_all_instruments(10, '1year', 'mean')
+    # api.get_updated_kpis()
+    # api.get_kpi_metadata()
+    # api.get_instrument_report(3, 'year')
+    # api.get_reports_metadata()
+    # api.get_stock_prices_date('2020-09-25')
+    # api.get_stock_splits()

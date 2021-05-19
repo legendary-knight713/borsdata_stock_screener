@@ -1,5 +1,5 @@
 # importing the borsdata_api
-from borsdata.borsdata_api import *
+from borsdata_api import BorsdataAPI
 # pandas is a data-analysis library for python (data frames)
 import pandas as pd
 # matplotlib for visual-presentations (plots)
@@ -43,8 +43,8 @@ class BorsdataClient:
             instrument_df = pd.DataFrame()
             # loop through the whole dataframe (table) i.e. row-wise-iteration.
             for index, instrument in instruments.iterrows():
+                ins_id = index
                 name = instrument['name']
-                ins_id = instrument['insId']
                 ticker = instrument['ticker']
                 isin = instrument['isin']
                 # locating meta-data in various ways
@@ -53,14 +53,14 @@ class BorsdataClient:
                 # .loc locates the rows where the criteria (inside the brackets, []) is fulfilled
                 # located rows (should be only one) get the column 'name' and return its value-array
                 # take the first value in that array ([0], should be only one value)
-                market = markets.loc[markets['id'] == instrument['marketId']]['name'].values[0]
-                country = countries.loc[countries['id'] == instrument['countryId']]['name'].values[0]
+                market = markets.loc[markets.index == instrument['marketId']]['name'].values[0]
+                country = countries.loc[countries.index == instrument['countryId']]['name'].values[0]
                 sector = 'N/A'
                 branch = 'N/A'
                 # index-typed instruments does not have a sector or branch
                 if market.lower() != 'index':
-                    sector = sectors.loc[sectors['id'] == instrument['sectorId']]['name'].values[0]
-                    branch = branches.loc[branches['id'] == instrument['branchId']]['name'].values[0]
+                    sector = sectors.loc[sectors.index == instrument['sectorId']]['name'].values[0]
+                    branch = branches.loc[branches.index == instrument['branchId']]['name'].values[0]
                 # appending current data to dataframe, i.e. adding a row to the table.
                 instrument_df = instrument_df.append({'name': name, 'ins_id': ins_id, 'ticker': ticker, 'isin': isin, 'instrument_type': instrument_type,
                                                                     'market': market, 'country': country, 'sector': sector, 'branch': branch}, ignore_index=True)
@@ -121,6 +121,7 @@ class BorsdataClient:
         for index, instrument in filtered_instruments.iterrows():
             # fetching the stock prices for the current instrument
             instrument_stock_price = self._borsdata_api.get_instrument_stock_prices(int(instrument['ins_id']))
+            instrument_stock_price.sort_index(inplace=True)
             # calculating the current instruments percent change
             instrument_stock_price['pct_change'] = instrument_stock_price['close'].pct_change(percent_change)
             # getting the last row of the dataframe, i.e. the last days values
@@ -131,12 +132,13 @@ class BorsdataClient:
         print(stock_prices.sort_values('pct_change', ascending=False).head(number_of_stocks))
         return stock_prices
 
-    def history_kpi(self, kpi, market, country):
+    def history_kpi(self, kpi, market, country, year):
         """
         gathers and concatenates historical kpi-values for provided kpi, market and country
         :param kpi: kpi id see https://github.com/Borsdata-Sweden/API/wiki/KPI-History
         :param market: market to gather kpi-values from
         :param country: country to gather kpi-values from
+        :param year: year for terminal print of kpi-values
         :return: pd.DataFrame of historical kpi-values
         """
         # creating api-object
@@ -150,16 +152,19 @@ class BorsdataClient:
         for index, instrument in filtered_instruments.iterrows():
             # fetching the stock prices for the current instrument
             instrument_kpi_history = self._borsdata_api.get_kpi_history(int(instrument['ins_id']), kpi, 'year', 'mean')
-            instrument_kpi_history['name'] = instrument['name']
             # check to see if response holds any data.
             if len(instrument_kpi_history) > 0:
+                # resetting index and adding name as a column
+                instrument_kpi_history.reset_index(inplace=True)
+                instrument_kpi_history.set_index('year', inplace=True)
+                instrument_kpi_history['name'] = instrument['name']
                 # appending data frame to array
                 frames.append(instrument_kpi_history.copy())
         # creating concatenated data frame with concat
         symbols_df = pd.concat(frames)
         # the data frame has the columns ['year', 'period', 'kpi_value', 'name']
-        # get the last year ranked from highest to lowest, show top 5
-        print(symbols_df[symbols_df['year'] == 2019].sort_values('kpi_value', ascending=False).head(5))
+        # show year ranked from highest to lowest, show top 5
+        print(symbols_df[symbols_df.index == year].sort_values('kpiValue', ascending=False).head(5))
         return symbols_df
 
     def get_latest_pe(self, ins_id):
@@ -172,15 +177,19 @@ class BorsdataClient:
         # fetching all instrument data
         reports_quarter, reports_year, reports_r12 = self._borsdata_api.get_instrument_reports(3)
         # getting the last reported eps-value
-        last_eps = reports_r12['earnings_per_share'].values[-1]
+        reports_r12.sort_index(inplace=True)
+        print(reports_r12.tail())
+        last_eps = reports_r12['earningsPerShare'].values[-1]
         # getting the stock prices
         stock_prices = self._borsdata_api.get_instrument_stock_prices(ins_id)
+        stock_prices.sort_index(inplace=True)
         # getting the last close
         last_close = stock_prices['close'].values[-1]
         # getting the last date
         last_date = stock_prices.index.values[-1]
-        # using help-function to retrieve the name of the instrument
-        instrument_name = self._borsdata_api.get_instrument_name(3)
+        # getting instruments data to retrieve the name of the ins_id
+        instruments = self._borsdata_api.get_instruments()
+        instrument_name = instruments[instruments.index == ins_id]['name'].values[0]
         # printing the name and calculated PE-ratio with the corresponding date. (array slicing, [:10])
         print(f"PE for {instrument_name} is {round(last_close/last_eps, 1)} with data from {str(last_date)[:10]}")
 
@@ -235,7 +244,7 @@ if __name__ == "__main__":
     borsdata_client.get_latest_pe(87)
     borsdata_client.instruments_with_meta_data()
     borsdata_client.plot_stock_prices(3)  # ABB
-    borsdata_client.history_kpi(2, 'Large Cap', 'Sverige')  # 2 == Price/Earnings (PE)
+    borsdata_client.history_kpi(2, 'Large Cap', 'Sverige', 2020)  # 2 == Price/Earnings (PE)
     borsdata_client.top_performers('Large Cap', 'Sverige', 10, 5)  # showing top10 performers based on 5 day return (1 week) for Large Cap Sverige.
 
 

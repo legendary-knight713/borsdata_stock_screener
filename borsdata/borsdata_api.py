@@ -70,6 +70,9 @@ class BorsdataAPI:
         return {
             "authKey": self._api_key,
             "version": 1,
+            'maxYearCount': 20,
+            'maxR12QCount': 40,
+            'maxCount': 20
         }
 
     """

@@ -39,7 +39,7 @@ class BorsdataClient:
             instruments = self._borsdata_api.get_instruments()
             # instrument type dict for conversion (https://github.com/Borsdata-Sweden/API/wiki/Instruments)
             instrument_type_dict = {0: 'Aktie', 1: 'Pref', 2: 'Index', 3: 'Stocks2', 4: 'SectorIndex',
-                                    5: 'BranschIndex'}
+                                    5: 'BranschIndex', 8: 'SPAC', 13: 'Index GI'}
             # creating an empty dataframe
             instrument_df = pd.DataFrame()
             # loop through the whole dataframe (table) i.e. row-wise-iteration.

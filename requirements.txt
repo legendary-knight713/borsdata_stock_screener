@@ -1,5 +1,5 @@
-numpy==1.18.2
-matplotlib==3.2.1
-pandas==1.0.3
-requests==2.23.0
-openpyxl==3.0.3
+numpy
+matplotlib
+pandas
+requests
+openpyxl

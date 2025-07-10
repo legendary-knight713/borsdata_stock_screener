@@ -1,0 +1,19 @@
+[
+  {"short": "EPS", "borsdata": "Earnings/share"},
+  {"short": "P/E", "borsdata": "P/E"},
+  {"short": "DivYield", "borsdata": "Dividend yield"},
+  {"short": "ROE", "borsdata": "Return on Equity"},
+  {"short": "ROA", "borsdata": "Return on Assets"},
+  {"short": "ROIC", "borsdata": "Return on Invested capital"},
+  {"short": "Operating Margin", "borsdata": "Operating margin"},
+  {"short": "EBITDA Margin", "borsdata": "EBITDA Margin"},
+  {"short": "FCF", "borsdata": "Free Cash Flow"},
+  {"short": "Asset Turnover", "borsdata": "Asset Turnover"},
+  {"short": "BVPS", "borsdata": "Book Value Per Share"},
+  {"short": "EV", "borsdata": "Enterprise Value"},
+  {"short": "EV/EBITDA", "borsdata": "EV/EBITDA"},
+  {"short": "P/FCF", "borsdata": "Price-to-Free Cash Flow"},
+  {"short": "P/B", "borsdata": "Price-to-Book"},
+  {"short": "P/S", "borsdata": "Price-to_Sales"},
+  {"short": "OCFPS", "borsdata": "Operating Cash Flow Per Share"}
+] 

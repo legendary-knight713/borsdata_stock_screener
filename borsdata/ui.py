@@ -72,7 +72,6 @@ def create_method_config(method_type, kpi_name, method_count):
 def render_method_selector(group_idx, kpi_idx, kpi_name, kpi_settings):
     """Render the method selection UI"""
     add_method_cols = st.columns([3, 1])
-    print(f"hello")
     
     with add_method_cols[0]:
         # Filter out already added methods to prevent duplicates

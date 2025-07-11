@@ -1,4 +1,4 @@
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import pandas as pd
 
 class FilterEngine:
@@ -6,7 +6,7 @@ class FilterEngine:
         # self.filters: List[KPIFilter] = []
         self._cached_data: Dict[str, pd.DataFrame] = {}
 
-def parse_quarter_string(quarter_str: str) -> Tuple[int, int]:
+def parse_quarter_string(quarter_str: str) -> Tuple[Optional[int], Optional[int]]:
     """Parse quarter string in format 'YYYY-Qx' to (year, quarter)"""
     if not quarter_str or len(quarter_str) != 7 or quarter_str[4] != '-':
         return None, None
@@ -20,8 +20,8 @@ def parse_quarter_string(quarter_str: str) -> Tuple[int, int]:
     except ValueError:
         return None, None
 
-def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n: int = None, 
-                             start_quarter: str = None, end_quarter: str = None) -> pd.DataFrame:
+def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n: Optional[int] = None, 
+                             start_quarter: Optional[str] = None, end_quarter: Optional[str] = None) -> pd.DataFrame:
     """Filter KPI data based on time range settings (quarterly or yearly)"""
     
     if kpi_data.empty:
@@ -49,10 +49,10 @@ def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n
                 start_year, start_q = parse_quarter_string(start_quarter)
                 end_year, end_q = parse_quarter_string(end_quarter)
             else:
-                start_year = int(start_quarter[:4])
-                end_year = int(end_quarter[:4])
+                start_year = int(start_quarter[:4]) if start_quarter else None
+                end_year = int(end_quarter[:4]) if end_quarter else None
                 start_q = end_q = None
-            if start_year and end_year:
+            if start_year is not None and end_year is not None:
                 filtered_data = []
                 for _, row in kpi_data.iterrows():
                     year = row['year']
@@ -70,7 +70,7 @@ def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n
                 return result
     return kpi_data
 
-def evaluate_kpi_filter(kpi_id: int, kpi_settings: Dict[str, Any], kpi_data: pd.DataFrame) -> bool:
+def evaluate_kpi_filter(kpi_id: int, kpi_settings: dict, kpi_data: pd.DataFrame) -> bool:
     """
     Evaluate a single KPI filter for a stock's KPI data.
     kpi_data: DataFrame with rows for this KPI and stock, indexed by quarter or year.
@@ -84,9 +84,9 @@ def evaluate_kpi_filter(kpi_id: int, kpi_settings: Dict[str, Any], kpi_data: pd.
     if trend_enabled:
         duration_type = 'Last N Quarters'
         last_n = kpi_settings.get('trend_n') 
-        kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n, start_quarter, end_quarter)
+        kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n or 1, start_quarter or '', end_quarter or '')
     else:
-        kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n, start_quarter, end_quarter)
+        kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n or 1, start_quarter or '', end_quarter or '')
     if kpi_data.empty:
         return False
     if (
@@ -217,8 +217,8 @@ def evaluate_kpi_filter(kpi_id: int, kpi_settings: Dict[str, Any], kpi_data: pd.
     direction = kpi_settings.get('direction', 'either')
     if direction_enabled and not kpi_data.empty and len(kpi_data) >= 2:
         # For direction filters, compare start and end value in the filtered range
-        if is_quarterly:
-            # Sort by year, period
+        if 'period' in kpi_data.columns:
+            # Sort by year, period if available
             kpi_data = kpi_data.sort_values(['year', 'period'])
         else:
             kpi_data = kpi_data.sort_values(['year'])

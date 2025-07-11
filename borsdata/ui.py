@@ -46,6 +46,31 @@ def fetch_yearly_kpi_history(api, stock_ids, kpi_id):
     
     return df_result
 
+def test_kpi_quarterly_availability(api, kpi_filters, stock_ids):
+    problematic_kpis = []
+    if not stock_ids:
+        return problematic_kpis
+    test_stock_id = stock_ids[0]  # Use the first stock for testing
+    for f in kpi_filters:
+        freq = f.get('data_frequency', 'Quarterly')
+        if str(freq).lower().startswith('quarter'):
+            kpi_id = f.get('kpi_id') or f.get('kpiId') or f.get('kpi')
+            kpi_name = f.get('kpi_name') or f.get('kpi') or str(kpi_id)
+            if not kpi_id:
+                continue
+            try:
+                df = api.get_kpi_history(test_stock_id, kpi_id, report_type='quarter', price_type='mean', max_count=1)
+                # If the result is None or empty, treat as unsupported
+                if df is None or (hasattr(df, 'empty') and df.empty):
+                    problematic_kpis.append(kpi_name)
+            except Exception as e:
+                msg = str(e)
+                st.write(f"Test fetch for KPI {kpi_name} ({kpi_id}) failed: {msg}")
+                # Check for 400 error or log message
+                if 'API-Error, status code: 400' in msg or '400' in msg:
+                    problematic_kpis.append(kpi_name)
+    return problematic_kpis
+
 # --- Helper Functions for UI Components ---
 def create_method_config(method_type, kpi_name, method_count):
     """Create a new method configuration with None defaults"""
@@ -70,56 +95,46 @@ def create_method_config(method_type, kpi_name, method_count):
     }
 
 def render_method_selector(group_idx, kpi_idx, kpi_name, kpi_settings):
-    """Render the method selection UI"""
-    add_method_cols = st.columns([3, 1])
-    
+    """Render the method selection UI (no Remove Method button here)"""
+    add_method_cols = st.columns([1])
     with add_method_cols[0]:
-        # Filter out already added methods to prevent duplicates
         existing_methods = [method['type'] for method in kpi_settings['methods']]
         available_methods = [''] + [method for method in ['Absolute', 'Relative', 'Direction', 'Trend'] if method not in existing_methods]
-        
         if len(existing_methods) >= 4:
             st.info("All methods already added for this KPI")
         else:
-            # Use a stable key that doesn't change when methods are added
             new_method = st.selectbox(
                 'Add Method',
                 available_methods,
                 key=f'add_method_{group_idx}_{kpi_idx}_{kpi_name}'
             )
             if new_method:
-                # Add new method configuration
                 method_config = create_method_config(new_method, kpi_name, len(kpi_settings["methods"]))
                 kpi_settings['methods'].append(method_config)
                 reset_results()
-    
-    return add_method_cols[1]
+    return None
 
 def render_method_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config):
-    """Render method-specific parameter inputs"""
-    method_cols = st.columns([3, 3, 2])
-    
-    with method_cols[0]:
-        # Method-specific parameters
-        if method_config['type'] == 'Absolute':
-            render_absolute_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
-        elif method_config['type'] == 'Relative':
-            render_relative_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
-        elif method_config['type'] == 'Direction':
-            render_direction_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
-        elif method_config['type'] == 'Trend':
-            render_trend_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
-    
-    with method_cols[1]:
-        render_method_values(group_idx, kpi_idx, method_idx, kpi_name, method_config)
-    
-    with method_cols[2]:
-        # Remove method button
-        st.markdown("<div style='height: 1.7em'></div>", unsafe_allow_html=True)  # Adjust height as needed
+    """Render method-specific parameter inputs with Remove Method button in the same row"""
+    method_row_cols = st.columns([4, 1])
+    with method_row_cols[0]:
+        param_cols = st.columns([1, 1])
+        with param_cols[0]:
+            if method_config['type'] == 'Absolute':
+                render_absolute_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
+            elif method_config['type'] == 'Relative':
+                render_relative_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
+            elif method_config['type'] == 'Direction':
+                render_direction_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
+            elif method_config['type'] == 'Trend':
+                render_trend_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
+        with param_cols[1]:
+            render_method_values(group_idx, kpi_idx, method_idx, kpi_name, method_config)
+    with method_row_cols[1]:
+        st.markdown("<div style='height: 1.7em'></div>", unsafe_allow_html=True)
         remove_method_clicked = st.button('Remove Method', key=f'remove_method_{group_idx}_{kpi_idx}_{method_idx}')
         if remove_method_clicked:
             return True  # Signal to remove method
-    
     return False
 
 def render_absolute_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config):
@@ -386,58 +401,45 @@ def render_trend_settings(group_idx, kpi_idx, method_idx, kpi_name, method_confi
         method_config['trend_m'] = None
 
 def render_kpi_instance(group_idx, kpi_idx, kpi_name, group):
-    """Render a single KPI instance with its methods"""
-    # Initialize settings for this KPI instance if not exists
-    # Use kpi_idx to distinguish between multiple instances of the same KPI
     kpi_instance_key = f"{kpi_name}_{kpi_idx}"
-    if kpi_instance_key not in group['filter_settings']:
-        group['filter_settings'][kpi_instance_key] = {
-            'methods': [],  # List of method configurations for this KPI instance
-            'kpi_name': kpi_name  # Store the actual KPI name for reference
-        }
-    
-    kpi_settings = group['filter_settings'][kpi_instance_key]
-    
-    # Show instance number if this KPI appears multiple times in the group
-    kpi_count = group['filters'].count(kpi_name)
-    if kpi_count > 1:
-        # Find which instance this is (1-based)
-        instance_number = 1
-        for i in range(kpi_idx):
-            if group['filters'][i] == kpi_name:
-                instance_number += 1
-        st.markdown(f"**{kpi_name} (Instance {instance_number})**")
-    else:
-        st.markdown(f"**{kpi_name}**")
-    
-    # Add method button
-    add_method_cols = render_method_selector(group_idx, kpi_idx, kpi_name, kpi_settings)
-    
-    with add_method_cols:
-        st.markdown("<div style='height: 1.7em'></div>", unsafe_allow_html=True)
+    kpi_settings = group.get('filter_settings', {}).get(kpi_instance_key, {})
+    if 'methods' not in kpi_settings:
+        kpi_settings['methods'] = []
+    methods = kpi_settings.get('methods', [])
+    # KPI header with name and remove button in same row, with less vertical space
+    kpi_header_cols = st.columns([3, 1])
+    with kpi_header_cols[0]:
+        st.markdown(f"**{kpi_name}**", unsafe_allow_html=True)
+    with kpi_header_cols[1]:
         remove_kpi_clicked = st.button('Remove KPI', key=f'remove_kpi_{group_idx}_{kpi_idx}')
         if remove_kpi_clicked:
             group['filters'].pop(kpi_idx)
-            # Remove the settings for this specific KPI instance
-            kpi_instance_key = f"{kpi_name}_{kpi_idx}"
             if kpi_instance_key in group['filter_settings']:
                 del group['filter_settings'][kpi_instance_key]
             reset_results()
-    
-    # Display method configurations for this KPI
-    if kpi_settings['methods']:
-        
-        for method_idx, method_config in enumerate(kpi_settings['methods']):
+    # Tighter spacing before method selector
+    st.markdown("<div style='margin-bottom: -1.5em'></div>", unsafe_allow_html=True)
+    method_removed = render_method_selector(group_idx, kpi_idx, kpi_name, kpi_settings)
+    group['filter_settings'][kpi_instance_key] = kpi_settings
+    if method_removed:
+        return
+    if len(methods) > 1:
+        current_operator = kpi_settings.get('method_operator', 'AND')
+        selected_operator = st.radio(
+            'Combine methods with:',
+            ['AND', 'OR'],
+            index=['AND', 'OR'].index(current_operator),
+            key=f'method_operator_{group_idx}_{kpi_idx}_{kpi_name}'
+        )
+        kpi_settings['method_operator'] = selected_operator
+        group['filter_settings'][kpi_instance_key] = kpi_settings
+    if methods:
+        for method_idx, method_config in enumerate(methods):
             st.markdown(f"**{method_config['type']} Method**")
-            
-            # Render method parameters
             should_remove = render_method_parameters(group_idx, kpi_idx, method_idx, kpi_name, method_config)
             if should_remove:
-                kpi_settings['methods'].pop(method_idx)
+                methods.pop(method_idx)
                 reset_results()
-                break
-            
-            # Render additional settings
             render_time_range_settings(group_idx, kpi_idx, method_idx, kpi_name, method_config)
             render_relative_settings(group_idx, kpi_idx, method_idx, kpi_name, method_config)
             st.markdown("---")
@@ -460,7 +462,7 @@ def render_filter_group(group_idx, group):
             )
             if new_kpi:
                 group['filters'].append(new_kpi)
-                reset_results()
+                # Don't reset results when just adding a KPI without methods
     
     with group_cols[1]:
         # Within-group operator (AND/OR)
@@ -477,6 +479,7 @@ def render_filter_group(group_idx, group):
         remove_group_clicked = st.button('Remove Group', key=f'remove_group_{group_idx}')
         if remove_group_clicked:
             st.session_state['filter_groups'].pop(group_idx)
+            # Only reset results when a group is actually removed
             reset_results()
     
     # Display KPIs in this group
@@ -786,6 +789,13 @@ def fetch_kpi_data_for_calculation(api, kpi_names: list, stock_ids: list, kpi_fr
     kpi_data = {}
     if kpi_frequency_map is None:
         kpi_frequency_map = {k: 'Quarterly' for k in kpi_names}
+    
+    # Limit the number of stocks to process to prevent timeouts
+    max_stocks = 1000  # Adjust this based on your API limits
+    if len(stock_ids) > max_stocks:
+        st.warning(f"Too many stocks ({len(stock_ids)}). Processing first {max_stocks} stocks only.")
+        stock_ids = stock_ids[:max_stocks]
+    
     for kpi_name in kpi_names:
         borsdata_name = kpi_short_to_borsdata.get(kpi_name, kpi_name)
         try:
@@ -821,61 +831,74 @@ def fetch_kpi_data_for_calculation(api, kpi_names: list, stock_ids: list, kpi_fr
                     st.info(f"Fetching {freq} data for KPI ID {kpi_id} ({kpi_name})")
                     all_rows = []
                     successful_fetches = 0
-                    for ins_id in stock_ids:
-                        try:
-                            df = api.get_kpi_history(ins_id, kpi_id, report_type='quarter' if freq == 'Quarterly' else 'year', price_type='mean')
-                            if df is not None and not df.empty:
-                                successful_fetches += 1
-                                for idx, row in df.iterrows():
-                                    available_cols = list(row.index)
-                                    year = None
-                                    period = None
-                                    kpi_value = None
-                                    for year_col in ['year', 'Year', 'YEAR', 'periodYear', 'reportYear']:
-                                        if year_col in available_cols:
-                                            year = row[year_col]
-                                            break
-                                    for period_col in ['period', 'Period', 'PERIOD', 'quarter', 'Quarter', 'QUARTER']:
-                                        if period_col in available_cols:
-                                            period = row[period_col]
-                                            break
-                                    for value_col in ['kpiValue', 'value', 'v', 'Value', 'VALUE', 'kpi_value']:
-                                        if value_col in available_cols:
-                                            kpi_value = row[value_col]
-                                            break
-                                    if kpi_value is not None:
-                                        try:
-                                            ins_id_int = int(ins_id)
-                                            if year is not None:
-                                                year_int = int(year)
-                                                if period is not None:
-                                                    period_int = int(period)
-                                                    all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': period_int, 'kpiValue': kpi_value})
+                    
+                    # Process stocks in batches to avoid timeouts
+                    batch_size = 50
+                    for i in range(0, len(stock_ids), batch_size):
+                        batch_stocks = stock_ids[i:i+batch_size]
+                        for ins_id in batch_stocks:
+                            try:
+                                df = api.get_kpi_history(ins_id, kpi_id, report_type='quarter' if freq == 'Quarterly' else 'year', price_type='mean')
+                                if df is not None and not df.empty:
+                                    successful_fetches += 1
+                                    for idx, row in df.iterrows():
+                                        available_cols = list(row.index)
+                                        year = None
+                                        period = None
+                                        kpi_value = None
+                                        for year_col in ['year', 'Year', 'YEAR', 'periodYear', 'reportYear']:
+                                            if year_col in available_cols:
+                                                year = row[year_col]
+                                                break
+                                        for period_col in ['period', 'Period', 'PERIOD', 'quarter', 'Quarter', 'QUARTER']:
+                                            if period_col in available_cols:
+                                                period = row[period_col]
+                                                break
+                                        for value_col in ['kpiValue', 'value', 'v', 'Value', 'VALUE', 'kpi_value']:
+                                            if value_col in available_cols:
+                                                kpi_value = row[value_col]
+                                                break
+                                        if kpi_value is not None:
+                                            try:
+                                                ins_id_int = int(ins_id)
+                                                if year is not None:
+                                                    year_int = int(year)
+                                                    if period is not None:
+                                                        period_int = int(period)
+                                                        all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': period_int, 'kpiValue': kpi_value})
+                                                    else:
+                                                        all_rows.append({'insId': ins_id_int, 'year': year_int, 'kpiValue': kpi_value})
                                                 else:
-                                                    all_rows.append({'insId': ins_id_int, 'year': year_int, 'kpiValue': kpi_value})
-                                            else:
-                                                if isinstance(idx, tuple) and len(idx) >= 2:
-                                                    year_int = int(idx[0])
-                                                    period_int = int(idx[1])
-                                                    all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': period_int, 'kpiValue': kpi_value})
-                                                elif isinstance(idx, (int, float)):
-                                                    year_int = int(idx)
-                                                    all_rows.append({'insId': ins_id_int, 'year': year_int, 'kpiValue': kpi_value})
-                                                else:
-                                                    current_year = 2024
-                                                    quarters_back = 0
-                                                    if isinstance(idx, (int, float)):
-                                                        quarters_back = int(idx)
-                                                    year_int = current_year - (quarters_back // 4)
-                                                    quarter_int = 4 - (quarters_back % 4)
-                                                    if quarter_int == 0:
-                                                        quarter_int = 4
-                                                        year_int -= 1
-                                                    all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': quarter_int, 'kpiValue': kpi_value})
-                                        except (ValueError, TypeError):
-                                            continue
-                        except Exception:
-                            continue
+                                                    if isinstance(idx, tuple) and len(idx) >= 2:
+                                                        year_int = int(idx[0])
+                                                        period_int = int(idx[1])
+                                                        all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': period_int, 'kpiValue': kpi_value})
+                                                    elif isinstance(idx, (int, float)):
+                                                        year_int = int(idx)
+                                                        all_rows.append({'insId': ins_id_int, 'year': year_int, 'kpiValue': kpi_value})
+                                                    else:
+                                                        current_year = 2024
+                                                        quarters_back = 0
+                                                        if isinstance(idx, (int, float)):
+                                                            quarters_back = int(idx)
+                                                        year_int = current_year - (quarters_back // 4)
+                                                        quarter_int = 4 - (quarters_back % 4)
+                                                        if quarter_int == 0:
+                                                            quarter_int = 4
+                                                            year_int -= 1
+                                                        all_rows.append({'insId': ins_id_int, 'year': year_int, 'period': quarter_int, 'kpiValue': kpi_value})
+                                            except (ValueError, TypeError):
+                                                continue
+                            except Exception as e:
+                                # Log error but continue processing
+                                st.warning(f"Error fetching data for stock {ins_id}: {e}")
+                                continue
+                        
+                        # Show progress for large datasets
+                        if len(stock_ids) > 100:
+                            progress = (i + batch_size) / len(stock_ids)
+                            st.progress(min(progress, 1.0))
+                    
                     df_result = pd.DataFrame(all_rows)
                     if not df_result.empty:
                         df_result['insId'] = df_result['insId'].astype(int)
@@ -955,7 +978,7 @@ with col2:
             'operator': 'AND',  # AND/OR within group
             'filter_settings': {}  # Individual filter settings will be stored here
         })
-        reset_results()
+        # Don't reset results when just adding an empty group
 
 with col3:
     st.markdown(
@@ -968,6 +991,7 @@ with col3:
     clear_groups_clicked = st.button('Clear All Groups', key='clear_groups')
     if clear_groups_clicked:
         st.session_state['filter_groups'] = []
+        # Only reset results when groups are actually cleared
         reset_results()
 
 # --- Between-group relationship ---
@@ -1009,7 +1033,7 @@ def generate_logic_preview():
                     trend_type = method_config.get('trend_type', 'Positive')
                     kpi_expressions.append(f"{kpi_name} Trend: {trend_type}")
             else:
-                # Multiple methods for this KPI - combine with AND
+                # Multiple methods for this KPI - combine with selected operator
                 method_expressions = []
                 for method_config in methods:
                     method_type = method_config.get('type', 'Absolute')
@@ -1027,7 +1051,10 @@ def generate_logic_preview():
                     elif method_type == 'Trend':
                         trend_type = method_config.get('trend_type', 'Positive')
                         method_expressions.append(f"{kpi_name} Trend: {trend_type}")
-                kpi_expressions.append(' AND '.join(method_expressions))
+                
+                # Use the selected method operator (AND/OR) for multiple methods
+                method_operator = kpi_settings.get('method_operator', 'AND')
+                kpi_expressions.append(f" {method_operator} ".join(method_expressions))
         if kpi_expressions:
             if len(kpi_expressions) == 1:
                 group_expr = f"({kpi_expressions[0]})"
@@ -1095,7 +1122,8 @@ def convert_groups_to_old_format():
                     'method': method_config.get('type', 'Absolute'),
                     'group_id': group_idx,  # Track which group this belongs to
                     'group_operator': group['operator'],  # Track within-group operator
-                    'method_id': method_idx  # Track which method this is for the KPI
+                    'method_id': method_idx,  # Track which method this is for the KPI
+                    'method_operator': kpi_settings.get('method_operator', 'AND')  # Track method operator for multiple methods
                 }
                 
                 # Add method-specific parameters (only if not None)
@@ -1204,7 +1232,7 @@ def build_group_logic_tree():
                         break
                 group_node = filter_idx if filter_idx is not None else group_idx
             else:
-                # Multiple methods - create AND/OR node for methods
+                # Multiple methods - create node with selected operator for methods
                 method_indices = []
                 for method_idx, method_config in enumerate(methods):
                     # Find the filter index in the old format
@@ -1216,8 +1244,10 @@ def build_group_logic_tree():
                             break
                 
                 if method_indices:
+                    # Use the selected method operator (AND/OR) for multiple methods
+                    method_operator = kpi_settings.get('method_operator', 'AND')
                     group_node = {
-                        'type': 'AND',  # Multiple methods for same KPI are combined with AND
+                        'type': method_operator,
                         'children': method_indices
                     }
                 else:
@@ -1242,7 +1272,7 @@ def build_group_logic_tree():
                     if filter_idx is not None:
                         kpi_indices.append(filter_idx)
                 else:
-                    # Multiple methods for this KPI - create sub-node
+                    # Multiple methods for this KPI - create sub-node with selected operator
                     method_indices = []
                     for method_idx, method_config in enumerate(methods):
                         for old_idx, old_filter in enumerate(st.session_state['kpi_filters']):
@@ -1256,9 +1286,10 @@ def build_group_logic_tree():
                         if len(method_indices) == 1:
                             kpi_indices.append(method_indices[0])
                         else:
-                            # Create sub-node for multiple methods
+                            # Create sub-node for multiple methods with selected operator
+                            method_operator = kpi_settings.get('method_operator', 'AND')
                             sub_node = {
-                                'type': 'AND',  # Multiple methods for same KPI are combined with AND
+                                'type': method_operator,
                                 'children': method_indices
                             }
                             # Add this sub-node to the group_nodes list
@@ -1301,191 +1332,205 @@ if fetch_clicked and not selected_countries and not selected_sectors:
 # --- Main results logic ---
 if fetch_clicked and (selected_countries or selected_sectors or (not selected_countries and not selected_sectors)):
     reset_pagination()
-    with st.spinner('Filtering, please wait seconds...'):
-        # Get base data with country and market filtering
-        country_ids_to_filter = [country_id_name_map[c] for c in selected_countries if c in country_id_name_map]
-        market_ids_to_filter = list(selected_markets) if selected_markets else None
-        
-        # Show what filters are being applied
-        if selected_countries:
-            filter_info = f"Countries: {', '.join(selected_countries)}"
-            if selected_markets:
-                filter_info += f" | Markets: {len(selected_markets)} selected"
-            else:
-                filter_info += f" | Markets: All markets in selected countries"
+    # Get base data with country and market filtering
+    country_ids_to_filter = [country_id_name_map[c] for c in selected_countries if c in country_id_name_map]
+    market_ids_to_filter = list(selected_markets) if selected_markets else None
+    
+    # Show what filters are being applied
+    if selected_countries:
+        filter_info = f"Countries: {', '.join(selected_countries)}"
+        if selected_markets:
+            filter_info += f" | Markets: {len(selected_markets)} selected"
         else:
-            filter_info = "Countries: All countries"
-            if selected_markets:
-                filter_info += f" | Markets: {len(selected_markets)} selected"
-            else:
-                filter_info += f" | Markets: All markets"
-        
-        if selected_sectors:
-            filter_info += f" | Sectors: {', '.join(selected_sectors)}"
+            filter_info += f" | Markets: All markets in selected countries"
+    else:
+        filter_info = "Countries: All countries"
+        if selected_markets:
+            filter_info += f" | Markets: {len(selected_markets)} selected"
         else:
-            filter_info += f" | Sectors: All sectors"
-        
-        # Add note for large datasets
-        if not selected_countries and not selected_sectors:
-            filter_info += " (Large dataset - results will be paginated)"
-        
-        st.info(filter_info)
-        
-        # Get base data - if no countries selected, get all stocks
-        if selected_countries:
-            base_df = get_filtered_stocks(
-                country_ids=country_ids_to_filter,
-                market_ids=market_ids_to_filter
-            )
-        else:
-            # No countries selected, get all stocks for sector filtering
-            base_df = get_filtered_stocks(
-                country_ids=None,  # Get all countries
-                market_ids=market_ids_to_filter
-            )
-        if not isinstance(base_df, pd.DataFrame):
-            base_df = pd.DataFrame(base_df)
-        
-        if len(base_df) == 0:
-            st.warning("No stocks found after country/market filtering. Check your country/market selections.")
-            st.session_state['filtered_instruments'] = pd.DataFrame()
-            st.session_state['results_ready'] = True
-            st.stop()
-        
-                # Apply sector and industry filtering
-        sector_ids_to_filter = [sector_id_name_map[s] for s in selected_sectors if s in sector_id_name_map]
-        industry_ids_to_filter = list(selected_industries) if selected_industries is not None else None
-        
-        # Apply sector/industry filtering if sectors or industries are selected
-        if sector_ids_to_filter or industry_ids_to_filter:
-            filtered_instruments = filter_by_metadata(
-                base_df,
-                country_ids=None,  # Already filtered in get_filtered_stocks() or getting all
-                market_ids=None,   # Already filtered in get_filtered_stocks() or getting all
-                sector_ids=sector_ids_to_filter if sector_ids_to_filter else None,
-                industry_ids=industry_ids_to_filter if industry_ids_to_filter else None
-            )
-        else:
-            # No sector/industry filtering needed, use base_df directly
-            filtered_instruments = base_df
-        
+            filter_info += f" | Markets: All markets"
+    
+    if selected_sectors:
+        filter_info += f" | Sectors: {', '.join(selected_sectors)}"
+    else:
+        filter_info += f" | Sectors: All sectors"
+    
+    # Add note for large datasets
+    if not selected_countries and not selected_sectors:
+        filter_info += " (Large dataset - results will be paginated)"
+    
+    st.info(filter_info)
+    
+    # Get base data - if no countries selected, get all stocks
+    if selected_countries:
+        base_df = get_filtered_stocks(
+            country_ids=country_ids_to_filter,
+            market_ids=market_ids_to_filter
+        )
+    else:
+        # No countries selected, get all stocks for sector filtering
+        base_df = get_filtered_stocks(
+            country_ids=None,  # Get all countries
+            market_ids=market_ids_to_filter
+        )
+    if not isinstance(base_df, pd.DataFrame):
+        base_df = pd.DataFrame(base_df)
+    
+    if len(base_df) == 0:
+        st.warning("No stocks found after country/market filtering. Check your country/market selections.")
+        st.session_state['filtered_instruments'] = pd.DataFrame()
+        st.session_state['results_ready'] = True
+        st.stop()
+    
+            # Apply sector and industry filtering
+    sector_ids_to_filter = [sector_id_name_map[s] for s in selected_sectors if s in sector_id_name_map]
+    industry_ids_to_filter = list(selected_industries) if selected_industries is not None else None
+    
+    # Apply sector/industry filtering if sectors or industries are selected
+    if sector_ids_to_filter or industry_ids_to_filter:
+        filtered_instruments = filter_by_metadata(
+            base_df,
+            country_ids=None,  # Already filtered in get_filtered_stocks() or getting all
+            market_ids=None,   # Already filtered in get_filtered_stocks() or getting all
+            sector_ids=sector_ids_to_filter if sector_ids_to_filter else None,
+            industry_ids=industry_ids_to_filter if industry_ids_to_filter else None
+        )
+    else:
+        # No sector/industry filtering needed, use base_df directly
+        filtered_instruments = base_df
+    
 
+    if not isinstance(filtered_instruments, pd.DataFrame):
+        filtered_instruments = pd.DataFrame(filtered_instruments)
+    
+    if len(filtered_instruments) == 0:
+        st.warning("No stocks found after sector/industry filtering. Check your sector/industry selections.")
+        st.session_state['filtered_instruments'] = pd.DataFrame()
+        st.session_state['results_ready'] = True
+        st.stop()
+    # --- KPI Filtering (before pagination) ---
+    # Convert groups to old format for compatibility
+    st.session_state['kpi_filters'] = convert_groups_to_old_format()
+    
+    # Build the logic tree AFTER converting to old format
+    if st.session_state['filter_groups']:
+        st.session_state['kpi_logic_tree'] = build_group_logic_tree()
+    
+    if st.session_state['kpi_filters'] and 'kpi_logic_tree' in st.session_state:
         if not isinstance(filtered_instruments, pd.DataFrame):
             filtered_instruments = pd.DataFrame(filtered_instruments)
-        
-        if len(filtered_instruments) == 0:
-            st.warning("No stocks found after sector/industry filtering. Check your sector/industry selections.")
-            st.session_state['filtered_instruments'] = pd.DataFrame()
-            st.session_state['results_ready'] = True
+        id_col = None
+        for candidate in ['id', 'insId', 'instrumentId']:
+            if candidate in filtered_instruments.columns:
+                id_col = candidate
+                break
+        if id_col is None:
+            st.error(f"No instrument ID column found in filtered_instruments. Columns: {filtered_instruments.columns.tolist()}")
             st.stop()
-        # --- KPI Filtering (before pagination) ---
-        # Convert groups to old format for compatibility
-        st.session_state['kpi_filters'] = convert_groups_to_old_format()
         
-        # Build the logic tree AFTER converting to old format
-        if st.session_state['filter_groups']:
-            st.session_state['kpi_logic_tree'] = build_group_logic_tree()
+        # Get unique KPIs from all filters
+        unique_kpis = list(set([kf['kpi'] for kf in st.session_state['kpi_filters']]))
+        stock_ids = list(filtered_instruments[id_col])
         
-        if st.session_state['kpi_filters'] and 'kpi_logic_tree' in st.session_state:
-            if not isinstance(filtered_instruments, pd.DataFrame):
-                filtered_instruments = pd.DataFrame(filtered_instruments)
-            id_col = None
-            for candidate in ['id', 'insId', 'instrumentId']:
-                if candidate in filtered_instruments.columns:
-                    id_col = candidate
-                    break
-            if id_col is None:
-                st.error(f"No instrument ID column found in filtered_instruments. Columns: {filtered_instruments.columns.tolist()}")
+        # Build a frequency map for each KPI from the filter settings
+        kpi_frequency_map = {}
+        for idx, kf in enumerate(st.session_state['kpi_filters']):
+            kpi_name = kf['kpi']
+            freq = kf.get('data_frequency', 'Quarterly')
+            kpi_frequency_map[kpi_name] = freq
+
+        # Use the frequency map when fetching KPI data
+        # --- Insert pre-fetch check for quarterly KPIs here ---
+        problematic_kpis = test_kpi_quarterly_availability(api, st.session_state['kpi_filters'], stock_ids)
+        if problematic_kpis:
+            st.warning(f"The following KPIs do not support quarterly data: {', '.join(problematic_kpis)}. Please change their frequency to 'Yearly' or remove them from your filter.")
+            st.stop()
+        # ------------------------------------------------------
+        with st.spinner('Processing KPI data...'):
+            try:
+                all_kpi_data = fetch_kpi_data_for_calculation(api, unique_kpis, stock_ids, kpi_frequency_map)
+            except Exception as e:
+                st.error(f"Error fetching KPI data: {e}")
                 st.stop()
             
-            # Get unique KPIs from all filters
-            unique_kpis = list(set([kf['kpi'] for kf in st.session_state['kpi_filters']]))
-            stock_ids = list(filtered_instruments[id_col])
+        # Prepare filter settings
+        kpi_filter_settings = {}
+        for idx, kf in enumerate(st.session_state['kpi_filters']):
+            kpi_name = kf['kpi']
+            borsdata_name = kpi_short_to_borsdata.get(kpi_name, kpi_name)
             
-            # Build a frequency map for each KPI from the filter settings
-            kpi_frequency_map = {}
-            for idx, kf in enumerate(st.session_state['kpi_filters']):
-                kpi_name = kf['kpi']
-                freq = kf.get('data_frequency', 'Quarterly')
-                kpi_frequency_map[kpi_name] = freq
-
-            # Use the frequency map when fetching KPI data
-            with st.spinner('Processing KPI data...'):
-                all_kpi_data = fetch_kpi_data_for_calculation(api, unique_kpis, stock_ids, kpi_frequency_map)
-                
-            # Prepare filter settings
-            kpi_filter_settings = {}
-            for idx, kf in enumerate(st.session_state['kpi_filters']):
-                kpi_name = kf['kpi']
-                borsdata_name = kpi_short_to_borsdata.get(kpi_name, kpi_name)
-                
-                kpi_filter_settings[idx] = {
-                    'abs_enabled': kf['method'] == 'Absolute',
-                    'abs_operator': kf.get('operator'),
-                    'abs_value': kf.get('value'),
-                    'last_n': kf.get('last_n') if kf.get('duration_type', 'Last N Quarters') == 'Last N Quarters' else None,
-                    'rel_enabled': kf['method'] == 'Relative',
-                    'rel_value': kf.get('rel_value'),
-                    'trend_enabled': kf['method'] == 'Trend',
-                    'trend_type': kf.get('trend_type'),
-                    'trend_n': kf.get('trend_n'),
-                    'trend_m': kf.get('trend_m'),
-                    'direction_enabled': kf['method'] == 'Direction',
-                    'direction': kf.get('direction', 'either'),
-                    'kpi_name': kpi_name,
-                    'borsdata_name': borsdata_name,
-                    'duration_type': kf.get('duration_type', 'Last N Quarters'),
-                    'start_quarter': kf.get('start_quarter'),
-                    'end_quarter': kf.get('end_quarter'),
-                }
+            kpi_filter_settings[idx] = {
+                'abs_enabled': kf['method'] == 'Absolute',
+                'abs_operator': kf.get('operator'),
+                'abs_value': kf.get('value'),
+                'last_n': kf.get('last_n') if kf.get('duration_type', 'Last N Quarters') == 'Last N Quarters' else None,
+                'rel_enabled': kf['method'] == 'Relative',
+                'rel_value': kf.get('rel_value'),
+                'trend_enabled': kf['method'] == 'Trend',
+                'trend_type': kf.get('trend_type'),
+                'trend_n': kf.get('trend_n'),
+                'trend_m': kf.get('trend_m'),
+                'direction_enabled': kf['method'] == 'Direction',
+                'direction': kf.get('direction', 'either'),
+                'kpi_name': kpi_name,
+                'borsdata_name': borsdata_name,
+                'duration_type': kf.get('duration_type', 'Last N Quarters'),
+                'start_quarter': kf.get('start_quarter'),
+                'end_quarter': kf.get('end_quarter'),
+            }
+        
+        # Prepare stock KPI data in the format expected by evaluate_kpi_filter
+        stock_kpi_data = {stock_id: {} for stock_id in stock_ids}
+        for kpi_name, kpi_df in all_kpi_data.items():
+            # Map Borsdata name back to short name for storage
+            short_name = None
+            for short, borsdata in kpi_short_to_borsdata.items():
+                if borsdata == kpi_name:
+                    short_name = short
+                    break
             
-            # Prepare stock KPI data in the format expected by evaluate_kpi_filter
-            stock_kpi_data = {stock_id: {} for stock_id in stock_ids}
-            for kpi_name, kpi_df in all_kpi_data.items():
-                # Map Borsdata name back to short name for storage
-                short_name = None
-                for short, borsdata in kpi_short_to_borsdata.items():
-                    if borsdata == kpi_name:
-                        short_name = short
-                        break
-                
-                if short_name is None:
-                    # If no mapping found, use the Borsdata name as is
-                    short_name = kpi_name
-                
-                for stock_id in stock_ids:
-                    if not kpi_df.empty:
-                        stock_df = kpi_df[kpi_df['insId'] == stock_id].copy()
-                        if not stock_df.empty:
-                            # Sort by year and period if available
-                            if 'period' in stock_df.columns:
-                                stock_df = stock_df.sort_values(['year', 'period'])
-                            else:
-                                stock_df = stock_df.sort_values('year')
-                            stock_kpi_data[stock_id][short_name] = stock_df
+            if short_name is None:
+                # If no mapping found, use the Borsdata name as is
+                short_name = kpi_name
             
-            # Save KPI data to session state for display in results table
-            st.session_state['kpi_data'] = stock_kpi_data
+            for stock_id in stock_ids:
+                if not kpi_df.empty:
+                    stock_df = kpi_df[kpi_df['insId'] == stock_id].copy()
+                    if not stock_df.empty:
+                        # Sort by year and period if available
+                        if 'period' in stock_df.columns:
+                            stock_df = stock_df.sort_values(['year', 'period'])
+                        else:
+                            stock_df = stock_df.sort_values('year')
+                        stock_kpi_data[stock_id][short_name] = stock_df
+        
+        # Save KPI data to session state for display in results table
+        st.session_state['kpi_data'] = stock_kpi_data
+        
+        # Apply filtering logic
+        tree = st.session_state['kpi_logic_tree']
+        
+        if isinstance(tree, int):
+            tree = {'type': 'AND', 'children': [tree]}
+        if not (isinstance(tree, dict) and 'children' in tree):
+            st.warning("Invalid KPI logic tree. Skipping KPI filtering.")
+            final_stock_ids = list(filtered_instruments[id_col])
+        else:
+            # Validate the logic tree before using it
+            if not validate_logic_tree(tree, kpi_filter_settings):
+                st.error("Logic tree validation failed. Some filter indices are missing. Please check your filter configuration.")
+                st.stop()
             
-            # Apply filtering logic
-            tree = st.session_state['kpi_logic_tree']
+            final_stock_ids = []
+            passed_count = 0
+            total_stocks = len(filtered_instruments[id_col])
             
-            if isinstance(tree, int):
-                tree = {'type': 'AND', 'children': [tree]}
-            if not (isinstance(tree, dict) and 'children' in tree):
-                st.warning("Invalid KPI logic tree. Skipping KPI filtering.")
-                final_stock_ids = list(filtered_instruments[id_col])
-            else:
-                # Validate the logic tree before using it
-                if not validate_logic_tree(tree, kpi_filter_settings):
-                    st.error("Logic tree validation failed. Some filter indices are missing. Please check your filter configuration.")
-                    st.stop()
-                
-                final_stock_ids = []
-                passed_count = 0
-                total_stocks = len(filtered_instruments[id_col])
-                
-                for stock_id in filtered_instruments[id_col]:
+            # Add progress bar for filtering
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for i, stock_id in enumerate(filtered_instruments[id_col]):
+                try:
                     result = evaluate_filter_tree(
                         tree,
                         kpi_filter_settings,
@@ -1494,18 +1539,30 @@ if fetch_clicked and (selected_countries or selected_sectors or (not selected_co
                     if result:
                         final_stock_ids.append(stock_id)
                         passed_count += 1
+                    
+                    # Update progress every 100 stocks
+                    if i % 100 == 0 or i == total_stocks - 1:
+                        progress = (i + 1) / total_stocks
+                        progress_bar.progress(progress)
+                        status_text.text(f"Filtering stocks: {i + 1}/{total_stocks} ({passed_count} passed)")
+                except Exception as e:
+                    st.error(f"Error evaluating stock {stock_id}: {e}")
+                    continue
             
-            if not isinstance(filtered_instruments, pd.DataFrame):
-                filtered_instruments = pd.DataFrame(filtered_instruments)
-            if not isinstance(filtered_instruments[id_col], pd.Series):
-                filtered_instruments[id_col] = pd.Series(filtered_instruments[id_col])
-            filtered_instruments = filtered_instruments[filtered_instruments[id_col].isin(list(final_stock_ids))]
-            
-            # Save KPI data to session state for display in results table
-            st.session_state['kpi_data'] = stock_kpi_data
+            progress_bar.empty()
+            status_text.empty()
         
-        st.session_state['filtered_instruments'] = filtered_instruments
-        st.session_state['results_ready'] = True
+        if not isinstance(filtered_instruments, pd.DataFrame):
+            filtered_instruments = pd.DataFrame(filtered_instruments)
+        if not isinstance(filtered_instruments[id_col], pd.Series):
+            filtered_instruments[id_col] = pd.Series(filtered_instruments[id_col])
+        filtered_instruments = filtered_instruments[filtered_instruments[id_col].isin(list(final_stock_ids))]
+        
+        # Save KPI data to session state for display in results table
+        st.session_state['kpi_data'] = stock_kpi_data
+    
+    st.session_state['filtered_instruments'] = filtered_instruments
+    st.session_state['results_ready'] = True
 
 def show_cagr_options():
     cagr_kpi = st.selectbox('CAGR KPI', [''] + kpi_options, key='cagr_kpi_stable')
@@ -1704,8 +1761,14 @@ if st.session_state.get('results_ready') and st.session_state.get('filtered_inst
                     rel_operator = kf.get('rel_operator', '')
                     rel_value = kf.get('rel_value', '')
                     rel_mode = kf.get('rel_mode', 'Year-over-Year (YoY)')
-                    # Show either YoY or QoQ in the header, no periods
-                    column_header = f"{kpi_name} {rel_mode} {rel_operator} {rel_value}% {duration_str}"
+                    # Use shorter version for display
+                    if rel_mode == 'Quarter-over-Quarter (QoQ)':
+                        display_mode = 'QoQ'
+                    elif rel_mode == 'Year-over-Year (YoY)':
+                        display_mode = 'YoY'
+                    else:
+                        display_mode = rel_mode
+                    column_header = f"{kpi_name} {display_mode} {rel_operator} {rel_value}% {duration_str}"
                 elif method == 'Direction':
                     direction = kf.get('direction', 'either')
                     column_header = f"{kpi_name} Direction: {direction} {duration_str}"
@@ -1804,3 +1867,4 @@ if st.session_state.get('results_ready') and st.session_state.get('filtered_inst
         pagination_controls(st.session_state['current_page'], total_pages, total_results)
 elif fetch_clicked:
     st.write("\n_No country or market selected. Please choose at least one country and one market.") 
+

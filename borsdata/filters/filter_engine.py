@@ -1,10 +1,5 @@
-from typing import Dict, Any, Tuple, Optional
+from typing import Tuple, Optional
 import pandas as pd
-
-class FilterEngine:
-    def __init__(self):
-        # self.filters: List[KPIFilter] = []
-        self._cached_data: Dict[str, pd.DataFrame] = {}
 
 def parse_quarter_string(quarter_str: str) -> Tuple[Optional[int], Optional[int]]:
     """Parse quarter string in format 'YYYY-Qx' to (year, quarter)"""

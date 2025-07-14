@@ -17,11 +17,15 @@ from borsdata.filters.kpi_logic import (
     fetch_kpi_data_for_calculation,
 )
 from borsdata.ui.ui_helpers import fetch_yearly_kpi_history, test_kpi_quarterly_availability
+from borsdata.ui.ui_presets import render_preset_management, apply_pending_preset
 
 def main():
     setup_page()
     apply_custom_css()
     initialize_session_state()
+    
+    # Apply any pending preset before rendering widgets
+    apply_pending_preset()
 
     api = BorsdataAPI(API_KEY)
     (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, df_kpis) = fetch(api)
@@ -45,6 +49,9 @@ def main():
     render_kpi_filter_groups(render_filter_group, kpi_options)
     kpi_filter_validate()
     kpi_filter_help()
+
+    # Add preset management functionality
+    render_preset_management()
 
     fetch_clicked = st.button('Fetch Results', key='fetch_results')
 

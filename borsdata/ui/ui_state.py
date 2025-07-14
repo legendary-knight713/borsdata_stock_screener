@@ -15,6 +15,22 @@ def initialize_session_state():
         st.session_state['selected_kpis'] = []
     if 'logic_preview' not in st.session_state:
         st.session_state['logic_preview'] = ''
+    # Initialize filter state variables for presets
+    if 'selected_countries' not in st.session_state:
+        st.session_state['selected_countries'] = []
+    if 'selected_markets' not in st.session_state:
+        st.session_state['selected_markets'] = set()
+    if 'selected_sectors' not in st.session_state:
+        st.session_state['selected_sectors'] = []
+    if 'selected_industries' not in st.session_state:
+        st.session_state['selected_industries'] = set()
+    if 'selected_stock_indice' not in st.session_state:
+        st.session_state['selected_stock_indice'] = '--- Choose stock indice ---'
+    # Initialize preset-related state
+    if 'pending_preset' not in st.session_state:
+        st.session_state['pending_preset'] = None
+    if 'apply_preset' not in st.session_state:
+        st.session_state['apply_preset'] = False
 
 def reset_pagination():
     st.session_state['current_page'] = 0

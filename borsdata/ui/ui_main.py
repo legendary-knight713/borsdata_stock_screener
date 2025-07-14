@@ -28,7 +28,7 @@ def main():
     apply_pending_preset()
 
     api = BorsdataAPI(API_KEY)
-    (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, df_kpis) = fetch(api)
+    (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, kpis_df) = fetch(api)
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     PACKAGE_ROOT = os.path.dirname(BASE_DIR)
@@ -112,13 +112,13 @@ def main():
                 kpi_name = kf['kpi']
                 freq = kf.get('data_frequency', 'Quarterly')
                 kpi_frequency_map[kpi_name] = freq
-            problematic_kpis = test_kpi_quarterly_availability(api, st.session_state['kpi_filters'], stock_ids, df_kpis, kpi_short_to_borsdata)
+            problematic_kpis = test_kpi_quarterly_availability(api, st.session_state['kpi_filters'], stock_ids, kpis_df, kpi_short_to_borsdata)
             if problematic_kpis:
                 st.warning(f"The following KPIs do not support quarterly data: {', '.join(problematic_kpis)}. Please change their frequency to 'Yearly' or remove them from your filter.")
                 st.stop()
             with st.spinner('Processing KPI data...'):
                 try:
-                    all_kpi_data = fetch_kpi_data_for_calculation(api, unique_kpis, stock_ids, kpi_frequency_map, df_kpis, kpi_short_to_borsdata, st=st, fetch_yearly_kpi_history=fetch_yearly_kpi_history, test_kpi_quarterly_availability=test_kpi_quarterly_availability)
+                    all_kpi_data = fetch_kpi_data_for_calculation(api, unique_kpis, stock_ids, kpi_frequency_map, kpis_df, kpi_short_to_borsdata, st=st, fetch_yearly_kpi_history=fetch_yearly_kpi_history, test_kpi_quarterly_availability=test_kpi_quarterly_availability)
                 except Exception as e:
                     st.error(f"Error fetching KPI data: {e}")
                     st.stop()
@@ -212,7 +212,7 @@ def main():
         show_results(
             filtered_instruments,
             kpi_short_to_borsdata,
-            df_kpis,
+            kpis_df,
             all_markets_df,
             all_sectors_df,
             all_countries_df,

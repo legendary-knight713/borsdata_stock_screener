@@ -16,8 +16,24 @@ def fetch(_api):
     all_markets_df = _api.get_markets().reset_index()
     all_sectors_df = _api.get_sectors().reset_index()
     all_branches_df = _api.get_branches().reset_index()
-    df_kpis = _api.get_kpi_metadata().reset_index()
-    return (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, df_kpis)
+    kpis_df = _api.get_kpi_metadata().reset_index()
+    return (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, kpis_df)
+
+def match_country_sector_industry_names(countries_df, sectors_df, industries_df, translation_df):
+    #Build a mapping from Swidish to English
+    sv_to_en = dict(zip(translation_df['nameSv'], translation_df['nameEn']))
+
+    #Replace in countries
+    if 'name' in countries_df.columns:
+        countries_df['name'] = countries_df['name'].map(lambda x: sv_to_en.get(x, x))
+    
+    #Replace in sectors
+    if 'name' in sectors_df.columns:
+        sectors_df['name'] = sectors_df['name'].map(lambda x: sv_to_en.get(x, x))
+
+    #Replace in industries/branches
+    if 'name' in industries_df.columns:
+        industries_df['name'] = industries_df['name'].map(lambda x:sv_to_en)
 
 # --- Fetch all stocks (no pagination here) ---
 def get_filtered_stocks(all_instruments_df, country_ids=None, market_ids=None) -> pd.DataFrame:

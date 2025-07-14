@@ -235,7 +235,10 @@ def show_results(
                                     start_quarter=kf.get('start_quarter'),
                                     end_quarter=kf.get('end_quarter')
                                 )
-                            values = kpi_df['kpiValue'].tolist()
+                            if not kpi_df.empty and 'kpiValue' in kpi_df.columns:
+                                values = kpi_df['kpiValue'].tolist()
+                            else:
+                                values = []
                             # Format values based on method type
                             if method == 'Trend':
                                 values = values[-last_n:]

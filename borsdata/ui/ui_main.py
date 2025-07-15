@@ -18,6 +18,7 @@ from borsdata.filters.kpi_logic import (
 )
 from borsdata.ui.ui_helpers import fetch_yearly_kpi_history, test_kpi_quarterly_availability
 from borsdata.ui.ui_presets import render_preset_management, apply_pending_preset
+from borsdata.api.borsdata_client import BorsdataClient
 
 def main():
     setup_page()
@@ -28,6 +29,7 @@ def main():
     apply_pending_preset()
 
     api = BorsdataAPI(API_KEY)
+    client = BorsdataClient()
     (all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df, kpis_df) = fetch(api)
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -118,7 +120,19 @@ def main():
                 st.stop()
             with st.spinner('Processing KPI data...'):
                 try:
-                    all_kpi_data = fetch_kpi_data_for_calculation(api, unique_kpis, stock_ids, kpi_frequency_map, kpis_df, kpi_short_to_borsdata, st=st, fetch_yearly_kpi_history=fetch_yearly_kpi_history, test_kpi_quarterly_availability=test_kpi_quarterly_availability)
+                    # Build mapping from borsdata name and short name to short name
+                    kpi_name_to_short = {}
+                    for item in kpi_json:
+                        kpi_name_to_short[item['borsdata']] = item['short']
+                        kpi_name_to_short[item['short']] = item['short']
+                    all_kpi_data = fetch_kpi_data_for_calculation(
+                        api, unique_kpis, stock_ids, kpi_frequency_map, kpis_df, kpi_short_to_borsdata, st=st,
+                        fetch_yearly_kpi_history=fetch_yearly_kpi_history,
+                        test_kpi_quarterly_availability=test_kpi_quarterly_availability,
+                        client=client,
+                        kpi_name_to_short=kpi_name_to_short
+                    )
+                    
                 except Exception as e:
                     st.error(f"Error fetching KPI data: {e}")
                     st.stop()
@@ -147,13 +161,15 @@ def main():
                 }
             stock_kpi_data = {stock_id: {} for stock_id in stock_ids}
             for kpi_name, kpi_df in all_kpi_data.items():
+                # Always use the short name as the key
                 short_name = None
-                for short, borsdata in kpi_short_to_borsdata.items():
-                    if borsdata == kpi_name:
-                        short_name = short
+                # Find the short name for this kpi_name (which may be English name or borsdata name)
+                for item in kpi_json:
+                    if item['borsdata'] == kpi_name or item['short'] == kpi_name:
+                        short_name = item['short']
                         break
                 if short_name is None:
-                    short_name = kpi_name
+                    short_name = kpi_name  # fallback
                 for stock_id in stock_ids:
                     if not kpi_df.empty:
                         stock_df = kpi_df[kpi_df['insId'] == stock_id].copy()

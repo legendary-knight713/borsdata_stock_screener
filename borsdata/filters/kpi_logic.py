@@ -186,8 +186,26 @@ def validate_logic_tree(tree, kpi_filter_settings):
     return False
 
 
-def fetch_kpi_data_for_calculation(api, kpi_names, stock_ids, kpi_frequency_map, df_kpis, kpi_short_to_borsdata, st=None, fetch_yearly_kpi_history=None, test_kpi_quarterly_availability=None):
-    """Fetch KPI data needed for calculations, using correct frequency for each KPI."""
+def fetch_kpi_data_for_calculation(api, kpi_names, stock_ids, kpi_frequency_map, df_kpis, kpi_short_to_borsdata, st=None, fetch_yearly_kpi_history=None, test_kpi_quarterly_availability=None, client=None, kpi_name_to_short=None):
+    """Fetch KPI data needed for calculations, using correct frequency for each KPI. Uses BorsdataClient for parallel fetching if possible. Always uses short name as key."""
+    if kpi_name_to_short is None:
+        # Build mapping from borsdata name and English name to short name
+        kpi_name_to_short = {}
+        for short, borsdata in kpi_short_to_borsdata.items():
+            kpi_name_to_short[borsdata] = short
+            kpi_name_to_short[short] = short
+        # Also add English and Swedish names from df_kpis if available
+        for _, row in df_kpis.iterrows():
+            short = None
+            for s, b in kpi_short_to_borsdata.items():
+                if b == row.get('nameEn') or b == row.get('nameSv'):
+                    short = s
+                    break
+            if short:
+                if 'nameEn' in row:
+                    kpi_name_to_short[row['nameEn']] = short
+                if 'nameSv' in row:
+                    kpi_name_to_short[row['nameSv']] = short
     kpi_data = {}
     if kpi_frequency_map is None:
         kpi_frequency_map = {k: 'Quarterly' for k in kpi_names}
@@ -195,6 +213,117 @@ def fetch_kpi_data_for_calculation(api, kpi_names, stock_ids, kpi_frequency_map,
     if len(stock_ids) > max_stocks and st:
         st.warning(f"Too many stocks ({len(stock_ids)}). Processing first {max_stocks} stocks only.")
         stock_ids = stock_ids[:max_stocks]
+
+    # Fast path: all KPIs are quarterly
+    if client is not None and all(freq == 'Quarterly' for freq in kpi_frequency_map.values()):
+        kpi_ids = []
+        kpi_name_to_borsdata = {k: kpi_short_to_borsdata.get(k, k) for k in kpi_names}
+        for kpi_name in kpi_names:
+            borsdata_name = kpi_name_to_borsdata[kpi_name]
+            kpi_id = None
+            target = borsdata_name.strip().lower()
+            for _, row in df_kpis.iterrows():
+                name_en = str(row.get('nameEn', '')).strip().lower()
+                name_sv = str(row.get('nameSv', '')).strip().lower()
+                if target == name_en or target == name_sv:
+                    kpi_id = row.get('kpiId')
+                    break
+                target_no_space = target.replace(" ", "")
+                name_en_no_space = name_en.replace(" ", "")
+                name_sv_no_space = name_sv.replace(" ", "")
+                if target_no_space == name_en_no_space or target_no_space == name_sv_no_space:
+                    kpi_id = row.get('kpiId')
+                    break
+            if kpi_id is not None:
+                kpi_ids.append(int(kpi_id))
+        if st:
+            st.info(f"Fetching all KPI data in parallel for {len(kpi_ids)} KPIs and {len(stock_ids)} stocks (quarterly)...")
+        kpi_df = client.fetch_kpi_data_for_stocks(kpi_ids, stock_ids, num_quarters=20)
+        for kpi_id, kpi_name in zip(kpi_ids, kpi_names):
+            # Always use short name as key
+            short_name = kpi_name_to_short.get(kpi_name, kpi_name)
+            kpi_data[short_name] = kpi_df[kpi_df['kpi_id'] == kpi_id].rename(columns={'stock_id': 'insId'})
+        return kpi_data
+
+    # Fast path: all KPIs are yearly
+    if client is not None and all(freq == 'Yearly' for freq in kpi_frequency_map.values()):
+        kpi_ids = []
+        kpi_name_to_borsdata = {k: kpi_short_to_borsdata.get(k, k) for k in kpi_names}
+        for kpi_name in kpi_names:
+            borsdata_name = kpi_name_to_borsdata[kpi_name]
+            kpi_id = None
+            target = borsdata_name.strip().lower()
+            for _, row in df_kpis.iterrows():
+                name_en = str(row.get('nameEn', '')).strip().lower()
+                name_sv = str(row.get('nameSv', '')).strip().lower()
+                if target == name_en or target == name_sv:
+                    kpi_id = row.get('kpiId')
+                    break
+                target_no_space = target.replace(" ", "")
+                name_en_no_space = name_en.replace(" ", "")
+                name_sv_no_space = name_sv.replace(" ", "")
+                if target_no_space == name_en_no_space or target_no_space == name_sv_no_space:
+                    kpi_id = row.get('kpiId')
+                    break
+            if kpi_id is not None:
+                kpi_ids.append(int(kpi_id))
+        if st:
+            st.info(f"Fetching all KPI data in parallel for {len(kpi_ids)} KPIs and {len(stock_ids)} stocks (yearly)...")
+        kpi_df = client.fetch_kpi_data_for_stocks_yearly(kpi_ids, stock_ids, num_years=20)
+        for kpi_id, kpi_name in zip(kpi_ids, kpi_names):
+            short_name = kpi_name_to_short.get(kpi_name, kpi_name)
+            kpi_data[short_name] = kpi_df[kpi_df['kpi_id'] == kpi_id].rename(columns={'stock_id': 'insId'})
+        return kpi_data
+
+    # Mixed: some quarterly, some yearly (fetch both in parallel, then merge)
+    if client is not None and set(kpi_frequency_map.values()).issubset({'Quarterly', 'Yearly'}):
+        quarterly_kpis = [k for k, freq in kpi_frequency_map.items() if freq == 'Quarterly']
+        yearly_kpis = [k for k, freq in kpi_frequency_map.items() if freq == 'Yearly']
+        kpi_name_to_borsdata = {k: kpi_short_to_borsdata.get(k, k) for k in kpi_names}
+        kpi_id_map = {}
+        for kpi_name in kpi_names:
+            borsdata_name = kpi_name_to_borsdata[kpi_name]
+            kpi_id = None
+            target = borsdata_name.strip().lower()
+            for _, row in df_kpis.iterrows():
+                name_en = str(row.get('nameEn', '')).strip().lower()
+                name_sv = str(row.get('nameSv', '')).strip().lower()
+                if target == name_en or target == name_sv:
+                    kpi_id = row.get('kpiId')
+                    break
+                target_no_space = target.replace(" ", "")
+                name_en_no_space = name_en.replace(" ", "")
+                name_sv_no_space = name_sv.replace(" ", "")
+                if target_no_space == name_en_no_space or target_no_space == name_sv_no_space:
+                    kpi_id = row.get('kpiId')
+                    break
+            if kpi_id is not None:
+                kpi_id_map[kpi_name] = int(kpi_id)
+        import concurrent.futures
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {}
+            if quarterly_kpis:
+                quarterly_ids = [kpi_id_map[k] for k in quarterly_kpis]
+                futures['quarterly'] = executor.submit(client.fetch_kpi_data_for_stocks, quarterly_ids, stock_ids, num_quarters=20)
+            if yearly_kpis:
+                yearly_ids = [kpi_id_map[k] for k in yearly_kpis]
+                futures['yearly'] = executor.submit(client.fetch_kpi_data_for_stocks_yearly, yearly_ids, stock_ids, num_years=20)
+            for key, future in futures.items():
+                results[key] = future.result()
+        if 'quarterly' in results:
+            for kpi_name in quarterly_kpis:
+                kpi_id = kpi_id_map[kpi_name]
+                short_name = kpi_name_to_short.get(kpi_name, kpi_name)
+                kpi_data[short_name] = results['quarterly'][results['quarterly']['kpi_id'] == kpi_id].rename(columns={'stock_id': 'insId'})
+        if 'yearly' in results:
+            for kpi_name in yearly_kpis:
+                kpi_id = kpi_id_map[kpi_name]
+                short_name = kpi_name_to_short.get(kpi_name, kpi_name)
+                kpi_data[short_name] = results['yearly'][results['yearly']['kpi_id'] == kpi_id].rename(columns={'stock_id': 'insId'})
+        return kpi_data
+
+    # Fallback: original logic
     for kpi_name in kpi_names:
         borsdata_name = kpi_short_to_borsdata.get(kpi_name, kpi_name)
         try:

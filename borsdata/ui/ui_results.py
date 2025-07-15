@@ -270,9 +270,8 @@ def show_results(
     display_columns = [col for col in display_columns if col in paginated_instruments.columns]
 
     st.write(f"Showing {len(paginated_instruments)} stocks for selected countries")
-    # Reset index to start from 1 for display
-    paginated_instruments_display = paginated_instruments.copy()
-    paginated_instruments_display.index = paginated_instruments_display.index + 1
+    # Reset index to remove the index column from display, do not add 'No.' column
+    paginated_instruments_display = paginated_instruments.copy().reset_index(drop=True)
     st.dataframe(paginated_instruments_display[display_columns])
     # Build mapping dictionaries for export
     sector_id_to_name = {row['id']: row['name'] for _, row in all_sectors_df.iterrows()}

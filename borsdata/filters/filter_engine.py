@@ -18,9 +18,10 @@ def parse_quarter_string(quarter_str: str) -> Tuple[Optional[int], Optional[int]
 def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n: Optional[int] = None, 
                              start_quarter: Optional[str] = None, end_quarter: Optional[str] = None) -> pd.DataFrame:
     """Filter KPI data based on time range settings (quarterly or yearly)"""
-    
     if kpi_data.empty:
         return kpi_data
+
+    has_period = 'period' in kpi_data.columns
 
     if (
         isinstance(start_quarter, str) and len(start_quarter) == 7 and
@@ -29,40 +30,38 @@ def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n
         is_quarterly = True
     else:
         is_quarterly = False
-    
+
     if duration_type == 'Last N Quarters':
         if last_n and last_n > 0:
-            result = kpi_data.tail(last_n)
+            # .tail() on a DataFrame always returns a DataFrame
+            return kpi_data.tail(last_n)
+        else:
+            # Always return a DataFrame (last row)
+            if len(kpi_data) > 0:
+                return kpi_data.iloc[[-1]]
+            else:
+                return pd.DataFrame(columns=kpi_data.columns)
+
+    # Example: filter by custom range (if implemented)
+    # If 'period' exists, filter by both year and period; otherwise, only by year
+    if start_quarter and end_quarter:
+        try:
+            start_year, start_period = map(int, start_quarter.split('Q')) if 'Q' in start_quarter else (int(start_quarter), None)
+            end_year, end_period = map(int, end_quarter.split('Q')) if 'Q' in end_quarter else (int(end_quarter), None)
+        except Exception:
+            start_year, start_period, end_year, end_period = None, None, None, None
+        if has_period and start_period is not None and end_period is not None:
+            # Quarterly: filter by year and period
+            result = kpi_data[
+                ((kpi_data['year'] > start_year) | ((kpi_data['year'] == start_year) & (kpi_data['period'] >= start_period))) &
+                ((kpi_data['year'] < end_year) | ((kpi_data['year'] == end_year) & (kpi_data['period'] <= end_period)))
+            ]
             return result
         else:
-            result = kpi_data.tail(1)  # Default to last quarter/year
+            # Yearly: filter by year only
+            result = kpi_data[(kpi_data['year'] >= start_year) & (kpi_data['year'] <= end_year)]
             return result
-    elif duration_type == 'Custom Range':
-        if start_quarter and end_quarter:
-            # For quarterly, parse as year+quarter; for yearly, parse as year only
-            if is_quarterly:
-                start_year, start_q = parse_quarter_string(start_quarter)
-                end_year, end_q = parse_quarter_string(end_quarter)
-            else:
-                start_year = int(start_quarter[:4]) if start_quarter else None
-                end_year = int(end_quarter[:4]) if end_quarter else None
-                start_q = end_q = None
-            if start_year is not None and end_year is not None:
-                filtered_data = []
-                for _, row in kpi_data.iterrows():
-                    year = row['year']
-                    if is_quarterly:
-                        period = row['period']
-                        if (start_year < year < end_year) or \
-                           (start_year == year and period >= start_q) or \
-                           (end_year == year and period <= end_q) or \
-                           (start_year == end_year == year and start_q <= period <= end_q):
-                            filtered_data.append(row)
-                    else:
-                        if start_year <= year <= end_year:
-                            filtered_data.append(row)
-                result = pd.DataFrame(filtered_data) if filtered_data else pd.DataFrame()
-                return result
+
     return kpi_data
 
 def evaluate_kpi_filter(kpi_id: int, kpi_settings: dict, kpi_data: pd.DataFrame) -> bool:
@@ -84,6 +83,10 @@ def evaluate_kpi_filter(kpi_id: int, kpi_settings: dict, kpi_data: pd.DataFrame)
         kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n or 1, start_quarter or '', end_quarter or '')
     if kpi_data.empty:
         return False
+    # Exclude stock if any KPI value is missing (nan or None) in the relevant time window
+    if 'kpiValue' in kpi_data.columns:
+        if kpi_data['kpiValue'].isnull().any():
+            return False
     if (
         isinstance(start_quarter, str) and len(start_quarter) == 7 and
         isinstance(end_quarter, str) and len(end_quarter) == 7

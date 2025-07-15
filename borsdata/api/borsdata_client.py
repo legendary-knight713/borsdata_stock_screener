@@ -1,8 +1,8 @@
-from borsdata_api import BorsdataAPI
+from borsdata.api.borsdata_api import BorsdataAPI
 import pandas as pd
 import matplotlib.pylab as plt
 import datetime as dt
-import constants
+from borsdata.api.constants import API_KEY
 import numpy as np
 import concurrent.futures
 from typing import Callable, Optional, List, Dict, Any, Union, Tuple
@@ -32,7 +32,7 @@ class BorsdataClient:
             ValueError: If API_KEY is not found in constants file.
             ValueError: If API_KEY is empty or None.
         """
-        api_key = constants.API_KEY
+        api_key = API_KEY
         if not api_key:
             raise ValueError("API_KEY not found or empty in constants file")
         try:
@@ -282,6 +282,44 @@ class BorsdataClient:
                         return pd.DataFrame({col: df[col].values for col in required_cols})
             except Exception as e:
                 logger.error(f"Error fetching KPI {kpi_id} for stock {stock_id}: {e}")
+            return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            results = list(executor.map(fetch_one, tasks))
+        frames = [df for df in results if df is not None]
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+        else:
+            return pd.DataFrame({col: [] for col in required_cols})
+
+    def fetch_kpi_data_for_stocks_yearly(self, kpi_ids: List[int], stock_ids: List[int], num_years: int = 20, cancel_check: Optional[Callable[[], bool]] = None) -> pd.DataFrame:
+        """
+        Fetch yearly data for the given KPIs and stocks for the last num_years years.
+        Returns a DataFrame with columns: ['stock_id', 'kpi_id', 'year', 'kpiValue']
+        Uses parallel requests for speed (max 10 concurrent).
+        If cancel_check is provided, will abort fetching if cancel_check() returns True.
+        """
+        frames = []
+        required_cols = ['stock_id', 'kpi_id', 'year', 'kpiValue']
+        tasks = [(stock_id, kpi_id) for stock_id in stock_ids for kpi_id in kpi_ids]
+        def fetch_one(args: Tuple[int, int]) -> Optional[pd.DataFrame]:
+            if cancel_check and cancel_check():
+                return None  # Early abort
+            stock_id, kpi_id = args
+            try:
+                df = self._borsdata_api.get_kpi_history(stock_id, kpi_id, 'year', 'mean', max_count=num_years)
+                if not df.empty:
+                    df = df.reset_index()
+                    df['stock_id'] = stock_id
+                    df['kpi_id'] = kpi_id
+                    # Ensure columns: year, kpiValue
+                    if 'kpiValue' not in df.columns:
+                        value_col = [col for col in df.columns if 'kpi' in col.lower() and 'value' in col.lower()]
+                        if value_col:
+                            df.rename(columns={value_col[0]: 'kpiValue'}, inplace=True)
+                    if all(col in df.columns for col in required_cols):
+                        return pd.DataFrame({col: df[col].values for col in required_cols})
+            except Exception as e:
+                logger.error(f"Error fetching yearly KPI {kpi_id} for stock {stock_id}: {e}")
             return None
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             results = list(executor.map(fetch_one, tasks))

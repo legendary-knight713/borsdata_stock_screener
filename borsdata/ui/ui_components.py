@@ -268,10 +268,16 @@ def render_filter_group(group_idx, group):
     group_cols = st.columns([2, 1, 1])
     with group_cols[0]:
         if st.session_state['selected_kpis']:
+            # Compute all KPIs used in all groups
+            all_used_kpis = set()
+            for g in st.session_state['filter_groups']:
+                all_used_kpis.update(g['filters'])
+            # Only show KPIs not already used in any group
+            available_kpis = [kpi for kpi in st.session_state['selected_kpis'] if kpi not in all_used_kpis]
             new_kpi = st.selectbox(
                 f'Add KPI to Group {group_idx + 1}',
-                [''] + st.session_state['selected_kpis'],
-                key=f'add_kpi_{group_idx}_{group["id"]}_{len(group["filters"])})'
+                [''] + available_kpis,
+                key=f'add_kpi_{group_idx}_{group["id"]}_{len(group["filters"])}'
             )
             if new_kpi:
                 group['filters'].append(new_kpi)
@@ -294,7 +300,7 @@ def render_filter_group(group_idx, group):
             group['filter_settings'] = {}
         for kpi_idx, kpi_name in enumerate(group['filters']):
             render_kpi_instance(group_idx, kpi_idx, kpi_name, group)
-        st.markdown("---") 
+        st.markdown("---")
 
 def render_kpi_multiselect(kpi_options):
     """Render the KPI multi-select widget and return the selected KPIs."""

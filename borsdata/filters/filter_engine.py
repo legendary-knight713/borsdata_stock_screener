@@ -36,7 +36,7 @@ def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n
             # .tail() on a DataFrame always returns a DataFrame
             return kpi_data.tail(last_n)
         else:
-            # Always return a DataFrame (last row)
+            # Always return a DataFrame with the last row if available
             if len(kpi_data) > 0:
                 return kpi_data.iloc[[-1]]
             else:
@@ -46,20 +46,37 @@ def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n
     # If 'period' exists, filter by both year and period; otherwise, only by year
     if start_quarter and end_quarter:
         try:
-            start_year, start_period = map(int, start_quarter.split('Q')) if 'Q' in start_quarter else (int(start_quarter), None)
-            end_year, end_period = map(int, end_quarter.split('Q')) if 'Q' in end_quarter else (int(end_quarter), None)
+            # Parse quarter strings like "2024-Q2" to (year, quarter)
+            if 'Q' in start_quarter:
+                start_year = int(start_quarter.split('-Q')[0])
+                start_period = int(start_quarter.split('-Q')[1])
+            else:
+                start_year = int(start_quarter)
+                start_period = None
+                
+            if 'Q' in end_quarter:
+                end_year = int(end_quarter.split('-Q')[0])
+                end_period = int(end_quarter.split('-Q')[1])
+            else:
+                end_year = int(end_quarter)
+                end_period = None
         except Exception:
             start_year, start_period, end_year, end_period = None, None, None, None
+        
         if has_period and start_period is not None and end_period is not None:
             # Quarterly: filter by year and period
             result = kpi_data[
                 ((kpi_data['year'] > start_year) | ((kpi_data['year'] == start_year) & (kpi_data['period'] >= start_period))) &
                 ((kpi_data['year'] < end_year) | ((kpi_data['year'] == end_year) & (kpi_data['period'] <= end_period)))
             ]
+            if isinstance(result, pd.Series):
+                return result.to_frame().T
             return result
         else:
             # Yearly: filter by year only
             result = kpi_data[(kpi_data['year'] >= start_year) & (kpi_data['year'] <= end_year)]
+            if isinstance(result, pd.Series):
+                return result.to_frame().T
             return result
 
     return kpi_data
@@ -81,11 +98,13 @@ def evaluate_kpi_filter(kpi_id: int, kpi_settings: dict, kpi_data: pd.DataFrame)
         kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n or 1, start_quarter or '', end_quarter or '')
     else:
         kpi_data = filter_data_by_time_range(kpi_data, duration_type, last_n or 1, start_quarter or '', end_quarter or '')
+    
     if kpi_data.empty:
         return False
-    # Exclude stock if any KPI value is missing (nan or None) in the relevant time window
+    # Only apply filter to non-NaN values; exclude only if all are NaN
     if 'kpiValue' in kpi_data.columns:
-        if kpi_data['kpiValue'].isnull().any():
+        non_nan_values = kpi_data['kpiValue'].dropna().values
+        if len(non_nan_values) == 0:
             return False
     if (
         isinstance(start_quarter, str) and len(start_quarter) == 7 and
@@ -103,9 +122,11 @@ def evaluate_kpi_filter(kpi_id: int, kpi_settings: dict, kpi_data: pd.DataFrame)
         if not kpi_data.empty:
             if duration_type == 'Last N Quarters':
                 last_n = kpi_settings.get('last_n') or 1
-                values_to_check = kpi_data.tail(last_n)['kpiValue'].values
+                values_to_check = kpi_data.tail(last_n)['kpiValue'].dropna().values
             else:  # Custom Range
-                values_to_check = kpi_data['kpiValue'].values
+                values_to_check = kpi_data['kpiValue'].dropna().values
+            if len(values_to_check) == 0:
+                return False
             condition_met = all(
                 (kpi_value > val) if op == '>' else
                 (kpi_value >= val) if op == '>=' else

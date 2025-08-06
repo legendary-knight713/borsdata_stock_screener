@@ -272,6 +272,7 @@ def show_results(
     st.write(f"Showing {len(paginated_instruments)} stocks for selected countries")
     # Show the results table
     paginated_instruments_display = paginated_instruments.copy().reset_index(drop=True)
+    paginated_instruments_display.index = paginated_instruments_display.index + 1
     st.dataframe(paginated_instruments_display[display_columns])
 
     if total_pages > 1:

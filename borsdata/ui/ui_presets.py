@@ -90,6 +90,9 @@ def get_current_filter_state() -> Dict[str, Any]:
     for key, value in st.session_state.items():
         if isinstance(key, str) and key.startswith('industry_') and isinstance(value, bool):
             industry_checkbox_states[key] = value
+            
+    stock_from_date = st.session_state.get('stock_from_date')
+    stock_to_date = st.session_state.get('stock_to_date')
     
     return {
         'filter_groups': st.session_state.get('filter_groups', []),
@@ -99,7 +102,10 @@ def get_current_filter_state() -> Dict[str, Any]:
         'selected_markets': list(st.session_state.get('selected_markets', set())),
         'selected_sectors': st.session_state.get('selected_sectors', []),
         'selected_industries': list(st.session_state.get('selected_industries', set())),
-        'selected_stock_indice': st.session_state.get('selected_stock_indice', '--- Choose stock indice ---'),
+        'stock_index': st.session_state.get('stock_index'),
+        'stock_from_date': stock_from_date.isoformat() if stock_from_date else None,
+        'stock_to_date': stock_to_date.isoformat() if stock_to_date else None,
+        'better_rate': st.session_state.get('better_rate'),
         'market_checkbox_states': market_checkbox_states,
         'industry_checkbox_states': industry_checkbox_states,
         'created_at': datetime.now().isoformat()
@@ -124,7 +130,7 @@ def apply_pending_preset():
         st.session_state['selected_markets'] = set(filter_state.get('selected_markets', []))
         st.session_state['selected_sectors'] = filter_state.get('selected_sectors', [])
         st.session_state['selected_industries'] = set(filter_state.get('selected_industries', []))
-        st.session_state['selected_stock_indice'] = filter_state.get('selected_stock_indice', '--- Choose stock indice ---')
+        st.session_state['stock_index'] = filter_state.get('stock_index')
         
         # Restore market checkbox states
         market_checkbox_states = filter_state.get('market_checkbox_states', {})
@@ -135,6 +141,20 @@ def apply_pending_preset():
         industry_checkbox_states = filter_state.get('industry_checkbox_states', {})
         for key, value in industry_checkbox_states.items():
             st.session_state[key] = value
+            
+        # Only set if not already set (prevents conflict)
+        stock_from_date_str = filter_state.get('stock_from_date')
+        if stock_from_date_str:
+            st.session_state['stock_from_date'] = datetime.strptime(stock_from_date_str, '%Y-%m-%d').date()
+    
+        stock_to_date_str = filter_state.get('stock_to_date')
+        if stock_to_date_str:
+            st.session_state['stock_to_date'] = datetime.strptime(stock_to_date_str, '%Y-%m-%d').date()
+        
+        if 'better_rate' not in st.session_state:
+            st.session_state['better_rate'] = filter_state.get('better_rate')
+        
+        st.session_state['better_rate'] = filter_state.get('better_rate')
         
         # Clear the pending preset
         st.session_state.pop('pending_preset', None)
@@ -155,7 +175,11 @@ def render_preset_management():
         current_state['selected_markets'] or
         current_state['selected_industries'] or
         current_state.get('market_checkbox_states') or
-        current_state.get('industry_checkbox_states')
+        current_state.get('industry_checkbox_states') or
+        current_state.get('stock_indice_select') or
+        current_state.get('stock_from_date') or
+        current_state.get('better_rate', 0) > 0.0 or
+        current_state.get('stock_to_date')
     )
     
     # Save section

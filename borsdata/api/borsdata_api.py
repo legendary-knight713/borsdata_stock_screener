@@ -445,7 +445,7 @@ class BorsdataAPI:
     Stock prices
     """
 
-    def get_instrument_stock_prices(self, ins_id, from_date=None, to_date=None, max_count=None):
+    def get_instrument_stock_prices(self, ins_id, from_date, to_date, max_count=None):
         """
         Get stock prices for instrument ID
         :param ins_id: Instrument ID
@@ -472,7 +472,7 @@ class BorsdataAPI:
         self._set_index(df, "date", ascending=False)
         return df
 
-    def get_instrument_stock_prices_list(self, stock_id_list, from_date=None, to_date=None):
+    def get_instrument_stock_prices_list(self, stock_id_list, from_date, to_date):
         """
         Get stock prices for instrument ID
         :param stock_id_list: Instrument ID list

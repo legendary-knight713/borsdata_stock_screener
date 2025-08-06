@@ -16,7 +16,7 @@ def parse_quarter_string(quarter_str: str) -> Tuple[Optional[int], Optional[int]
         return None, None
 
 def filter_data_by_time_range(kpi_data: pd.DataFrame, duration_type: str, last_n: Optional[int] = None, 
-                             start_quarter: Optional[str] = None, end_quarter: Optional[str] = None) -> pd.DataFrame:
+                            start_quarter: Optional[str] = None, end_quarter: Optional[str] = None) -> pd.DataFrame:
     """Filter KPI data based on time range settings (quarterly or yearly)"""
     if kpi_data.empty:
         return kpi_data

@@ -7,9 +7,10 @@ from borsdata.ui.ui_layout import setup_page, apply_custom_css, kpi_filter_help
 from borsdata.ui.ui_state import initialize_session_state, kpi_filter_validate, reset_pagination, pagination_controls
 from borsdata.ui.ui_constants import PAGE_SIZE
 from borsdata.ui.ui_data import fetch, get_filtered_stocks
-from borsdata.ui.ui_filters import render_filters, render_kpi_filter_groups
+from borsdata.ui.ui_filters import render_filters, render_kpi_filter_groups, render_stock_index_filter
 from borsdata.ui.ui_results import show_results
 from borsdata.ui.ui_components import render_filter_group, reset_results, render_kpi_multiselect
+from borsdata.filters.filter_engine import filter_by_metadata
 from borsdata.filters.kpi_logic import (
     convert_groups_to_old_format,
     build_group_logic_tree,
@@ -51,38 +52,59 @@ def main():
     render_kpi_filter_groups(render_filter_group, kpi_options)
     kpi_filter_validate()
     kpi_filter_help()
+    stock_index, stock_from_date, stock_to_date, better_rate = render_stock_index_filter()
 
     # Add preset management functionality
     render_preset_management()
 
     fetch_clicked = st.button('Fetch Results', key='fetch_results')
 
-    if fetch_clicked and not selected_countries and not selected_sectors:
+    if fetch_clicked and not selected_countries and not selected_sectors and not selected_stock_indice:
         st.info("Fetching results for all countries and all sectors. This may take a moment...")
-
-    if fetch_clicked and (selected_countries or selected_sectors or (not selected_countries and not selected_sectors)):
+        
+    if fetch_clicked and (selected_countries or selected_sectors or (not selected_countries and not selected_sectors) or selected_stock_indice):
         reset_pagination()
-        country_ids_to_filter = [country_id_name_map[c] for c in selected_countries if c in country_id_name_map]
-        market_ids_to_filter = list(selected_markets) if selected_markets else None
+
+        # Always start with full dataset
+        base_df = all_instruments_df.copy()
+
+        # Apply stock index filter FIRST
+        if selected_stock_indice and not (better_rate > 0.0):
+            base_df = get_filtered_stocks(base_df, selected_stock_indice=selected_stock_indice)
+
+        # Apply country filter (if any)
         if selected_countries:
-            base_df = get_filtered_stocks(all_instruments_df, country_ids=country_ids_to_filter, market_ids=market_ids_to_filter)
-        else:
-            base_df = get_filtered_stocks(all_instruments_df, country_ids=None, market_ids=market_ids_to_filter)
+            country_ids_to_filter = [country_id_name_map[c] for c in selected_countries if c in country_id_name_map]
+            base_df = base_df[base_df['countryId'].isin(country_ids_to_filter)]
+
+        # Apply market filter (if any)
+        if selected_markets:
+            market_ids_to_filter = [int(x) for x in selected_markets]
+            available_market_ids = set(base_df['marketId'].dropna().unique())
+            if set(market_ids_to_filter) == available_market_ids:
+                base_df = base_df[base_df['marketId'].isin(market_ids_to_filter) | base_df['marketId'].isnull()]
+            else:
+                base_df = base_df[base_df['marketId'].isin(market_ids_to_filter)]
+
+        # If it's not a DataFrame already
         if not isinstance(base_df, type(all_instruments_df)):
             base_df = type(all_instruments_df)(base_df)
+
+        # Apply sector/industry filters
         sector_ids_to_filter = [sector_id_name_map[s] for s in selected_sectors if s in sector_id_name_map]
-        industry_ids_to_filter = list(selected_industries) if selected_industries is not None else None
-        from borsdata.filters.filter_engine import filter_by_metadata
+        industry_ids_to_filter = list(selected_industries) if selected_industries else None
+
         if sector_ids_to_filter or industry_ids_to_filter:
             filtered_instruments = filter_by_metadata(
                 base_df,
                 country_ids=None,
                 market_ids=None,
                 sector_ids=sector_ids_to_filter if sector_ids_to_filter else None,
-                industry_ids=industry_ids_to_filter if industry_ids_to_filter else None
+                industry_ids=industry_ids_to_filter if industry_ids_to_filter else None,
             )
         else:
             filtered_instruments = base_df
+        
         if not isinstance(filtered_instruments, type(all_instruments_df)):
             filtered_instruments = type(all_instruments_df)(filtered_instruments)
         if len(filtered_instruments) == 0:
@@ -221,6 +243,39 @@ def main():
                 filtered_instruments[id_col] = type(all_instruments_df[id_col])(filtered_instruments[id_col])
             filtered_instruments = filtered_instruments[filtered_instruments[id_col].isin(list(final_stock_ids))]
             st.session_state['kpi_data'] = stock_kpi_data
+        # Apply stock index filter after KPI filtering    
+        if stock_index and stock_from_date and stock_to_date is not None and better_rate > 0.0:
+            with st.spinner("Filtering by stock index performance..."):
+                # Get index insId from ticker
+                index_row = all_instruments_df[all_instruments_df['ticker'] == stock_index]
+                if index_row.empty:
+                    st.warning(f"Index '{stock_index}' not found in instruments data.")
+                else:
+                    index_ins_id = int(index_row.iloc[0]['insId'])
+                    index_prices = api.get_instrument_stock_prices(index_ins_id, from_date=stock_from_date, to_date=stock_to_date)
+
+                    if index_prices.empty:
+                        st.warning(f"No price data found for selected index '{stock_index}' between {stock_from_date} and {stock_to_date}.")
+                    else:
+                        index_return = (index_prices['close'].iloc[0] - index_prices['close'].iloc[-1]) / index_prices['close'].iloc[-1]
+
+                        passed_ids = []
+                        # filtered_instruments = get_filtered_stocks(filtered_instruments, selected_stock_indice=stock_index)
+                        for _, row in filtered_instruments.iterrows():
+                            stock_id = row['insId']
+                            stock_prices = api.get_instrument_stock_prices(stock_id, from_date=stock_from_date, to_date=stock_to_date)
+                            if stock_prices.empty or len(stock_prices) < 2:
+                                continue
+                            stock_return = (stock_prices['close'].iloc[0] - stock_prices['close'].iloc[-1]) / stock_prices['close'].iloc[-1]
+                            if index_return != 0:
+                                relative_outperformance = (stock_return - index_return) / abs(index_return) * 100
+                            else:
+                                relative_outperformance = float('inf') if stock_return > 0 else float('-inf')
+                            if relative_outperformance >= better_rate:
+                                passed_ids.append(stock_id)
+
+                        filtered_instruments = filtered_instruments[filtered_instruments['insId'].isin(passed_ids)]
+
         st.session_state['filtered_instruments'] = filtered_instruments
         st.session_state['results_ready'] = True
     if st.session_state.get('results_ready') and st.session_state.get('filtered_instruments') is not None:

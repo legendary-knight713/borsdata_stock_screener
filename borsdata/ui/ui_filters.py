@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import json
 import pandas as pd
+import datetime
 from borsdata.ui.ui_components import render_kpi_multiselect
 
 def render_filters(all_instruments_df, all_countries_df, all_markets_df, all_sectors_df, all_branches_df):
@@ -112,15 +113,20 @@ def render_filters(all_instruments_df, all_countries_df, all_markets_df, all_sec
     # Stock Indice Combo Box
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(BASE_DIR, '../data/stock_indices.json')
+
     with open(json_path, 'r') as f:
-        stock_indice_options = json.load(f)
-    stock_indice_options = ['--- Choose stock indice ---'] + stock_indice_options
+        stock_indice_dict = json.load(f)
+
+    # Build list of options (keys from the dictionary)
+    stock_indice_options = list(stock_indice_dict.keys())
+
+    # Allow user to select one or more stock indices
     selected_stock_indice = st.selectbox(
-        'Select stock indice', 
-        stock_indice_options, 
-        key='stock_indice',
-        index=0
+        'Select stock indices', 
+        ['--- Choose stock index ---'] + stock_indice_options,
+        key='stock_index'
     )
+
 
     return selected_countries, selected_markets, selected_sectors, selected_industries, selected_stock_indice, country_id_name_map, sector_id_name_map
 
@@ -238,3 +244,29 @@ def render_kpi_filter_groups(render_filter_group, kpi_options):
         return ''
     st.session_state['logic_preview'] = generate_logic_preview()
     st.info(f"**Filter Formula:** {st.session_state['logic_preview']}")
+
+
+def render_stock_index_filter():
+    st.subheader('Stock Index Filter')
+    
+    today = datetime.date.today()
+    if 'stock_from_date' not in st.session_state:
+        st.session_state['stock_from_date'] = today - datetime.timedelta(days=365)  # or some default
+
+    if 'stock_to_date' not in st.session_state:
+        st.session_state['stock_to_date'] = today
+    default_from = today.replace(year=today.year-20) if today.year > 20 else today
+    
+    selected_stock_indice = st.session_state.get('stock_index')
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        stock_from_date = st.date_input('From date', value=default_from, key='stock_from_date', max_value=today)
+    with col2:    
+        stock_to_date = st.date_input('To date (optional)', value=today, key='stock_to_date', max_value=today)
+    with col3:
+        better_rate = st.number_input('Better Performance Rate (%)',
+                                    value=0.0, step=0.1, key='better_rate',
+                                    help="Stocks must outperform the index by this percentage to be included in results.")
+        
+    return selected_stock_indice, stock_from_date, stock_to_date, better_rate

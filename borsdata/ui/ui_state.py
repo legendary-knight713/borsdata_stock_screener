@@ -5,6 +5,8 @@ PAGE_SIZE = 50
 def initialize_session_state():
     if 'kpi_filters' not in st.session_state:
         st.session_state['kpi_filters'] = []
+    if 'stock_filters' not in st.session_state:
+        st.session_state['stock_filters'] = []
     if 'current_page' not in st.session_state:
         st.session_state['current_page'] = 0
     if 'filter_groups' not in st.session_state:

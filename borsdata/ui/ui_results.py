@@ -209,6 +209,8 @@ def show_results(
                     direction = kf.get('direction', 'either')
                     column_header = f"{kpi_name} Direction: {direction} {duration_str}"
                 else:
+                    last_n = kf.get('trend_n')
+                    duration_str = f"(last {last_n} periods)"
                     column_header = f"{kpi_name} {duration_str}"
                 
                 # Get actual KPI values for each stock
